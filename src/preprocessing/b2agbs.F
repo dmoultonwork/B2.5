@@ -25,6 +25,10 @@
      *  cell_width(-1:nx,-1:ny), cell_height(-1:nx,-1:ny)
 *   ..local variables
       integer i, ix, iy, ixl, ixr, jxi, jxa, jsep
+      integer average_flux, flux_count(nncutmax,-1:ny)
+      real (kind=R8) :: tube_flux(nncutmax,-1:ny)
+      data average_flux /0/
+      save average_flux
       integer ntubes(-1:ny), ixref(nncutmax,-1:ny), iseg(-1:nx,-1:ny),
      *  ixleft(nncutmax,-1:ny), isnum(nncutmax,-1:ny)
       real (kind=R8) :: hz(-1:nx,-1:ny),
@@ -42,6 +46,7 @@
 *   ..subprogram start-up calls
       call subini ('b2agbs')
       call ipgetr ('b2agmt_1d_width', width)
+      call ipgeti ('b2agbs_average_flux', average_flux)
       
 *   ..preparatory quantities
       hz(:,:) = vol(:,:)/gs(:,:,2)
@@ -130,6 +135,32 @@
         end do
       end do
 
+*   ..optional reflection-invariant reference flux. A one-end reference
+*     can select different physical locations in reflected PFR segments.
+*     Average all valid western faces, including the right target face
+*     and excluding the non-existent face of a left guard cell. Evaluate
+*     these fluxes before changing any wbbl values below.
+      if (average_flux.ne.0) then
+        tube_flux = 0.0_R8
+        flux_count = 0
+        do iy = -1, ny
+          do ix = -1, nx
+            if (region(ix,iy,0).eq.0) cycle
+            i = iseg(ix,iy)
+            if (i.eq.0) cycle
+            if (leftix(ix,iy).eq.-2) cycle
+            tube_flux(i,iy) = tube_flux(i,iy) +
+     &        wbbl(ix,iy,0)*gs(ix,iy,0)*qc(ix,iy)
+            flux_count(i,iy) = flux_count(i,iy) + 1
+          end do
+          do i = 1, ntubes(iy)
+            call xertst(flux_count(i,iy).gt.0,
+     &        'No valid faces for flux-tube average')
+            tube_flux(i,iy) = tube_flux(i,iy)/flux_count(i,iy)
+          end do
+        end do
+      end if
+
 *   ..correct pbsx, hx, and hy to enforce:
 *   ..B_{pol}*hy1*hz constant (on western cell faces and at cell centers)
 *   ..vol = hy1*hx*hz
@@ -142,6 +173,8 @@
           pol_flux = wbbl(ixref(iseg(ix,iy),iy),iy,0) *
      &                 gs(ixref(iseg(ix,iy),iy),iy,0) *
      &                 qc(ixref(iseg(ix,iy),iy),iy)
+          if (average_flux.ne.0) pol_flux =
+     &      tube_flux(iseg(ix,iy),iy)
 
           if (leftix(ix,iy).ne.-2) then ! do not adjust pbs if leftix=-2
                                         ! since there is no western face
