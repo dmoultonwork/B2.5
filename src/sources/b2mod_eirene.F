@@ -508,7 +508,9 @@ csw 26feb2013
      .   'Cannot have simultaneous multiple Eirene averaging schemes!')
         if(nhist.gt.1)
      .    call alloc_hist_arrays(nhist,write_eirene_sources)
-        if(nrelax.gt.1 .or. nhist.gt.1 .or. n_avg_repeat.gt.1)
+c Multiple-call tally shapes can grow during first EIRENE initialisation.
+c Allocate those accumulators only after the first transport call.
+        if(nrelax.gt.1 .or. nhist.gt.1)
      .    call alloc_sum_arrays(write_eirene_sources)
         call xertst(ank_mods.eq.0.or.ionising_core.le.0,
      1   'contradictory inputs ank_mods and ionising_core!')
@@ -924,7 +926,8 @@ c         to fort.xx.init files, to avoid being overwritten by the false
 c         multiple Eirene time steps internal to a B2.5 time step
           call store_initial_fort_file(13)
           call store_initial_fort_file(15)
-          call clear_sum_arrays(write_eirene_sources)
+          if(allocated(sni_s))
+     &      call clear_sum_arrays(write_eirene_sources)
         endif
 c       Main cycle: repeat Eirene calls n_avg_repeat times (default = 1)
         do while (eircount.le.(n_avg_repeat-1))
@@ -949,6 +952,15 @@ c         SINGLE EIRENE CALL
      1     eirene_step_cpu)
 c         Cumulate source terms from past and current Eirene calls
           if(n_avg_repeat.gt.1) then
+           if(.not.allocated(sni_s)) then
+             call alloc_sum_arrays(write_eirene_sources)
+             call clear_sum_arrays(write_eirene_sources)
+             write(*,*) 'EIRENE_AVERAGING_SHAPES_INITIALISED',
+     &         shape(wldna_res),shape(wldna_res_s)
+           endif
+           call xertst(all(shape(wldna_res_s).eq.
+     &       shape(wldna_res)),
+     &       'EIRENE averaging wall tally shape changed')
            call cumulate_source_arrays(write_eirene_sources)
           endif
           eircount=eircount+1
@@ -4480,7 +4492,7 @@ csw 26feb2014
          deallocate(sei_av_eppl)
        endif
       endif
-      if(nhist.gt.1 .or. n_avg_repeat.gt.1) call dealloc_sum_arrays
+      if(allocated(sni_s)) call dealloc_sum_arrays
       if(nrelax.gt.1 .or. nhist.gt.1) call dealloc_hist_arrays
       deallocate(feedback_strata)
       deallocate(hlp_pff,hlp_stra)
@@ -5137,21 +5149,21 @@ c     Slots 2 and 3 are not used by eirene_mc and must be zero.
       allocate(wlpump_s(size(wlpump,1),size(wlpump,2)))
       allocate(wlpump_res_s(size(wlpump_res,1),size(wlpump_res,2)))
 #ifdef B25_EIRENE
-      allocate(pdena_s(natm,ntri-1))
-      allocate(pdenm_s(nmol,ntri-1))
-      allocate(pdeni_s(nion,ntri-1))
-      allocate(edena_s(natm,ntri-1))
-      allocate(edenm_s(nmol,ntri-1))
-      allocate(edeni_s(nion,ntri-1))
-      allocate(vxdena_s(natm,ntri-1))
-      allocate(vxdenm_s(nmol,ntri-1))
-      allocate(vxdeni_s(nion,ntri-1))
-      allocate(vydena_s(natm,ntri-1))
-      allocate(vydenm_s(nmol,ntri-1))
-      allocate(vydeni_s(nion,ntri-1))
-      allocate(vzdena_s(natm,ntri-1))
-      allocate(vzdenm_s(nmol,ntri-1))
-      allocate(vzdeni_s(nion,ntri-1))
+      allocate(pdena_s(size(pdena,1),size(pdena,2)))
+      allocate(pdenm_s(size(pdenm,1),size(pdenm,2)))
+      allocate(pdeni_s(size(pdeni,1),size(pdeni,2)))
+      allocate(edena_s(size(edena,1),size(edena,2)))
+      allocate(edenm_s(size(edenm,1),size(edenm,2)))
+      allocate(edeni_s(size(edeni,1),size(edeni,2)))
+      allocate(vxdena_s(size(vxdena,1),size(vxdena,2)))
+      allocate(vxdenm_s(size(vxdenm,1),size(vxdenm,2)))
+      allocate(vxdeni_s(size(vxdeni,1),size(vxdeni,2)))
+      allocate(vydena_s(size(vydena,1),size(vydena,2)))
+      allocate(vydenm_s(size(vydenm,1),size(vydenm,2)))
+      allocate(vydeni_s(size(vydeni,1),size(vydeni,2)))
+      allocate(vzdena_s(size(vzdena,1),size(vzdena,2)))
+      allocate(vzdenm_s(size(vzdenm,1),size(vzdenm,2)))
+      allocate(vzdeni_s(size(vzdeni,1),size(vzdeni,2)))
 #endif
       call clear_sum_arrays(write_eirene_sources)
       return
