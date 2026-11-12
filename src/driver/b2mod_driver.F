@@ -92,7 +92,7 @@
       use eirmod_wneutrals
      , , only : eirene_wneutrals_init
       use b2mod_eirene
-     , , only : eirene_mc_final
+     , , only : eirene_mc_final, eirene_ramp_save
       use b2mod_b2plot
      , , only : vxa, dealloc_b2mod_b2plot_eirene
 #ifdef NAGFOR
@@ -2851,6 +2851,9 @@ c new CDF movie option
           call find_file(filename,found)
           if (found) call write_b2mod_transport_models(99,
      >     savefile(13:16))
+#ifdef B25_EIRENE
+          call eirene_ramp_save(savefile(13:16))
+#endif
           if (ank_tracing.ne.0) call b2filef
 
 #ifdef B25_EIRENE

@@ -79,6 +79,27 @@
      .  see_av_eiel(:,:,:), see_av_epel(:,:,:),
      .  sei_av_eapl(:,:,:), sei_av_empl(:,:,:),
      .  sei_av_eipl(:,:,:), sei_av_eppl(:,:,:)
+c     Reconstruction of the sources on steps without an Eirene call
+c     (eirene_rate_reconstruct) and the ramp between calls
+c     (eirene_ramp_steps)
+      integer, allocatable, save :: rr_hx(:), rr_hy(:)
+      real (kind=R8), allocatable, save ::
+     &  rr_a0(:,:,:), rr_f(:,:,:), rr_ne0(:)
+      logical, save :: rr_have=.false.
+      real (kind=R8), allocatable, save ::
+     &  cx_k(:,:,:), cx_ev(:,:), cx_uc(:,:,:), cx_tc(:,:)
+      integer, allocatable, save :: cx_map(:)
+      logical, save :: cx_init=.false., cx_ok=.false.
+      logical, save :: cx_listed=.false.
+      integer, save :: rr_key=-1
+      logical, save :: fresh_call=.true.
+      integer, save :: ramp_n=-1, ramp_k=0
+      logical, save :: ramp_have=.false., ramp_on=.false.
+      logical, save :: ramp_tried=.false.
+      real (kind=R8), allocatable, save ::
+     &  ramp_pna(:,:,:,:), ramp_pmo(:,:,:,:), ramp_phe(:,:,:),
+     &  ramp_phi(:,:,:), ramp_fna(:,:,:,:), ramp_fmo(:,:,:,:),
+     &  ramp_fhe(:,:,:), ramp_fhi(:,:,:)
       real (kind=R8), allocatable, save ::                        !IYS 28.03.12 {
      &  sni_h(:,:,:,:,:),
      &  smo_h(:,:,:,:,:),
@@ -179,6 +200,8 @@ csw 19oct2012, added save attribute!!!
       integer iflag
 #endif
       logical feedback_stratum
+      logical cool_scaled
+      real (kind=R8) :: cool_exp
       real (kind=R8) ::
      * recyc_hlp,vthe,t0,t1,rf0,dua,t2,t3,t4,f,
      * neutral_sources_rescale, ndes, private_flux_puff, nesepm_sol,
@@ -474,6 +497,14 @@ c not sure this is the right place
         call ipgeti ('eirene_symmetrise_sources', symmetrise_sources)
         if(symmetrise_sources.ne.0)
      &   call check_symmetrise_eirene_grid(nx)
+        rr_key=0
+        call ipgeti ('eirene_rate_reconstruct', rr_key)
+        call xertst(iand(rr_key,not(113)).eq.0.and.
+     &   (rr_key.eq.0.or.iand(rr_key,1).ne.0),
+     &   'eirene_rate_reconstruct: use 0 or 1 plus 16, 32, 64')
+        ramp_n=0
+        call ipgeti ('eirene_ramp_steps', ramp_n)
+        call xertst(ramp_n.ge.0,'eirene_ramp_steps must be >= 0')
 csw 28jan2011, call to eirene_mc_init not used anymore, use new modules
 c        call eirene_mc_init(nx,ny)
         call eirene_extrab25_alloc_mods
@@ -528,6 +559,11 @@ c Allocate those accumulators only after the first transport call.
         call write_f30(nx, ny)
         call get_nxt(nx, nxtl, nxtr)
         call get_jsep(nx,ny,jxi,jxa,jsep)
+      endif
+      if(ncall.eq.0.or.(main_call.and.mod(ncall,eirene_mod).eq.0)) then
+        fresh_call=.true.
+      else if(main_call) then
+        fresh_call=.false.
       endif
       if(ncall.eq.0.or.(main_call.and.mod(ncall,eirene_mod).eq.0)) then
         call copy_background(nx,ny,ns,BoRiS)
@@ -950,6 +986,10 @@ c         SINGLE EIRENE CALL
           call eirene_eirsrt(last,my_ltime,eirene_step_dt,tflux,
      *     b2brem,b2rad,b2qie(0),b2vdp,
      1     eirene_step_cpu)
+#ifdef B25_EIRENE
+          call reconstruct_eirene_rates(nx,ny,.true.)
+          call eirene_cx_state(nx,ny,ns,.true.)
+#endif
 c         Cumulate source terms from past and current Eirene calls
           if(n_avg_repeat.gt.1) then
            if(.not.allocated(sni_s)) then
@@ -2915,6 +2955,12 @@ c     .                          .or. crcstra(istrai).eq.'U'
 csw 2012 now transfer (rescaled) sources into sna0, smo0, she0, shi0,
 c   and apply linearisation
 
+#ifdef B25_EIRENE
+      if(main_call.and..not.fresh_call)
+     &  call reconstruct_eirene_rates(nx,ny,.false.)
+      if(main_call.and..not.fresh_call)
+     &  call eirene_cx_state(nx,ny,ns,.false.)
+#endif
       ssni=0.0_R8
       ssmo=0.0_R8
       ssee=0.0_R8
@@ -3167,6 +3213,17 @@ c                    write(6,*) 'recombination particle source > 0! ',t0
 c                    write(6,*) 'istrai,is,ix,iy ',istrai,is,ix,iy
 c                  end if !}
 
+c Skipped Eirene call: ionisation and recombination sources scaled by
+c the ratio of the summed event rates at the present and at the last-call
+c plasma state, per cell (reconstruct_eirene_rates).
+                  if(rr_key.gt.0.and.allocated(rr_f).and.
+     &               .not.fresh_call) then
+                    if(t0.lt.0.0_R8.and.crcstra(istrai).eq.'V') then
+                      t0=t0*rr_f(2,ix,iy)
+                    elseif(t0.gt.0.0_R8) then
+                      t0=t0*rr_f(1,ix,iy)
+                    endif
+                  endif
                   if(linearisation.eq.1) then !{
                     if(t0.ge.0.0_R8) then !{
                       sna0(ix,iy,0,is)=sna0(ix,iy,0,is)+t0
@@ -3610,7 +3667,21 @@ c     *         recyc_hlp*flux_scale(istrai)*sclstra(0,istrai)
      *           recyc_hlp*sclstra(0,istrai)
               endif
 
-              if (linearisation.eq.1) then !{
+              cool_scaled=.false.
+              cool_exp=0.0_R8
+              if(rr_key.gt.0.and.t0.lt.0.0_R8.and.allocated(rr_f).and.
+     &           .not.fresh_call) then
+c Skipped Eirene call: electron cooling sink scaled by the ratio of the
+c summed energy-loss rates (present / last call) and linearised with the
+c local Te exponent of that rate.
+                t0=t0*rr_f(3,ix,iy)
+                cool_exp=rr_f(4,ix,iy)
+                cool_scaled=.true.
+              endif
+              if (cool_scaled) then
+                she0(ix,iy,0)=she0(ix,iy,0)+t0*(1.0_R8-cool_exp)
+                she0(ix,iy,1)=she0(ix,iy,1)+cool_exp*t0/te(ix,iy)
+              else if (linearisation.eq.1) then !{
                 she0(ix,iy,0)=she0(ix,iy,0)+max(0.0_R8,t0)+abs(t0)*rf0
                 she0(ix,iy,1)=she0(ix,iy,1)+
      1           (min(0.0_R8,t0)-abs(t0)*rf0)/te(ix,iy)
@@ -3883,6 +3954,16 @@ csw 26mar2013 (for TESTING)
                     endif
 
 csw 06mar2012 total correction
+c Same rate-ratio scaling as the particle source (sna0), so that the
+c kinetic-energy conversion below stays consistent with it.
+                    if(rr_key.gt.0.and..not.fresh_call.and.
+     &                 allocated(rr_f)) then
+                      if(t3.lt.0.0_R8.and.crcstra(istrai).eq.'V') then
+                        t3=t3*rr_f(2,ix,iy)
+                      elseif(t3.gt.0.0_R8) then
+                        t3=t3*rr_f(1,ix,iy)
+                      endif
+                    endif
                     t1=t1-ua(ix,iy,is)*t2+kinrgy(ix,iy,is)*t3
                     if (balance_netcdf.ne.0 .or.          !djm Jan2017
      *                 write_eirene_sources.ne.0) then
@@ -4426,8 +4507,14 @@ c     .     ('Negative eirene_ionising_core must be used with BCCON=13')
         write(*,*) 'Cumulative_volume_recombination ',cum_volrec
       end if !}
 
+#ifdef B25_EIRENE
+      if(main_call.and..not.fresh_call)
+     &  call eirene_cx_apply(nx,ny,ns,smo0,shi0)
+#endif
       if(main_call.and.symmetrise_sources.ne.0)
      & call symmetrise_eirene_sources(nx,ny,ns,sna0,smo0,she0,shi0)
+      if(main_call) call ramp_eirene_sources(nx,ny,ns,fresh_call,
+     & sna0,smo0,she0,shi0)
 
       if (main_call.or.ncall.eq.0) ncall=ncall+1
 
@@ -4442,6 +4529,7 @@ c     .     ('Negative eirene_ionising_core must be used with BCCON=13')
       integer, intent(in) :: nx, ny, ns
       real(kind=R8), intent(in) :: BoRiS
 
+      call eirene_ramp_save('final')
       if(saved_volrec_used) then
         call write_b2mod_neutrals_save(99,'    ')
         call dealloc_b2mod_neutrals_save
@@ -4735,6 +4823,600 @@ c!###}
       endif ! ank_mods
       return
       end subroutine neutr_scl
+
+#ifdef B25_EIRENE
+      subroutine eirene_cx_state(nx,ny,ns,fresh)
+c     Charge-exchange response between Eirene calls (bit 16 of
+c     'eirene_rate_reconstruct').  At a fresh call: map Eirene's bulk
+c     ion species to B2.5 species (by density), store the ion flow
+c     velocity and ion temperature of the call and print the charge-
+c     exchange event rates.  On a skipped step: re-evaluate Eirene's own
+c     charge-exchange rate (eirene_ftabcx3) per triangle with the stored
+c     neutral densities at B2.5's present ion density and temperature
+c     and keep, per cell, the event rate of every ion species
+c     (cx_k = m_i * events/s, the momentum friction coefficient) and the
+c     total (cx_ev, for the ion thermal-energy relaxation).
+      use eirmod_comusr, only: natmi,nmoli,nplsi,dein,deinl,diin,
+     &  tiinl,vol,mplsti,diinl
+      use eirmod_comxs, only: nacxi,nmcxi,lgacx,lgmcx,nreacx,modcol,
+     &  modclf,addcx,facrcx
+      use eirmod_comprt, only: ipls
+      use eirmod_cgrid, only: nsbox
+      use eirmod_cpes, only: my_pe
+      implicit none
+      integer, intent(in) :: nx,ny,ns
+      logical, intent(in) :: fresh
+      integer :: ic,hx,hy,fam,nsp,nr,sp,j,ircx,ip,kk,is,modc,ipold
+      integer :: nmatch,ntot,best,nunsup
+      real(R8) :: den,k,frac,bestf,ne_s,nel_s,di_s,ti_s,evt
+      real(R8) :: ne_l,ti_l,di_l
+      real(R8), allocatable :: acc(:,:,:)
+      integer, external :: eirene_idez
+      real(R8) :: eirene_ftabcx3,eirene_rate_coeff,expo,di_ls,tii
+      real(R8), parameter :: elb0=1.0986122887_R8
+      external eirene_ftabcx3,eirene_rate_coeff
+      logical :: model2
+      if(iand(rr_key,16).eq.0) return
+      if(my_pe.ne.0) return
+      if(.not.allocated(rr_hx)) return
+      if(.not.allocated(cx_k)) then
+        allocate(cx_k(-1:nx,-1:ny,0:ns-1),cx_ev(-1:nx,-1:ny),
+     &    cx_uc(-1:nx,-1:ny,0:ns-1),cx_tc(-1:nx,-1:ny))
+        cx_k=0.0_R8
+        cx_ev=0.0_R8
+        cx_uc=0.0_R8
+        cx_tc=0.0_R8
+      endif
+      if(fresh.and..not.cx_init) then
+        cx_init=.true.
+        cx_ok=.true.
+        allocate(cx_map(max(1,nplsi)))
+        cx_map=-1
+        do ip=1,nplsi
+          best=-1
+          bestf=0.0_R8
+          do is=0,ns-1
+            if(is_neutral(is)) cycle
+            nmatch=0
+            ntot=0
+            do ic=1,nsbox
+              hx=rr_hx(ic)
+              hy=rr_hy(ic)
+              if(hx.lt.-1) cycle
+              if(diin(ip,ic).le.1.0e8_R8) cycle
+              ntot=ntot+1
+              if(abs(diin(ip,ic)-1.0e-6_R8*na(hx,hy,is)).le.
+     &           1.0e-6_R8*diin(ip,ic)) nmatch=nmatch+1
+            enddo
+            frac=real(nmatch,R8)/max(1,ntot)
+            if(frac.gt.bestf) then
+              bestf=frac
+              best=is
+            endif
+          enddo
+          if(bestf.gt.0.99_R8) cx_map(ip)=best
+          write(*,'(a,i3,a,i3,a,f8.4)') 'EIRENE_CX map bulk ion',ip,
+     &      ' -> B2.5 species',best,' matching fraction',bestf
+        enddo
+      endif
+      if(.not.cx_ok) return
+      if(fresh.and..not.cx_listed) then
+        cx_listed=.true.
+        do fam=1,2
+          if(fam.eq.1) nsp=natmi
+          if(fam.eq.2) nsp=nmoli
+          do sp=1,nsp
+            if(fam.eq.1) nr=nacxi(sp)
+            if(fam.eq.2) nr=nmcxi(sp)
+            do j=1,nr
+              if(fam.eq.1) ircx=lgacx(sp,j,0)
+              if(fam.eq.2) ircx=lgmcx(sp,j,0)
+              if(fam.eq.1) ip=lgacx(sp,j,1)
+              if(fam.eq.2) ip=lgmcx(sp,j,1)
+              kk=-99
+              modc=-99
+              if(ircx.ge.1) kk=nreacx(ircx)
+              if(kk.ge.1.and.kk.le.size(modclf))
+     &          modc=eirene_idez(modclf(kk),3,5)
+              write(*,'(a,6i5,a,i4)') 'STEP_CX reaction fam,sp,j,'//
+     &          'ircx,ipls,kk:',fam,sp,j,ircx,ip,kk,' modcol(3,2)=',
+     &          modcol(3,2,max(1,ircx))
+              write(*,'(a,i4)') 'STEP_CX   modc(from modclf)=',modc
+            enddo
+          enddo
+        enddo
+      endif
+      allocate(acc(-1:nx,-1:ny,0:ns-1))
+      acc=0.0_R8
+      nunsup=0
+      ipold=ipls
+      do ic=1,nsbox
+        hx=rr_hx(ic)
+        hy=rr_hy(ic)
+        if(hx.lt.-1) cycle
+        do fam=1,2
+          if(fam.eq.1) nsp=natmi
+          if(fam.eq.2) nsp=nmoli
+          do sp=1,nsp
+            if(fam.eq.1) nr=nacxi(sp)
+            if(fam.eq.2) nr=nmcxi(sp)
+            if(fam.eq.1) den=pdena(sp,ic)
+            if(fam.eq.2) den=pdenm(sp,ic)
+            if(den.le.0.0_R8) cycle
+            do j=1,nr
+              if(fam.eq.1) ircx=lgacx(sp,j,0)
+              if(fam.eq.2) ircx=lgmcx(sp,j,0)
+              if(fam.eq.1) ip=lgacx(sp,j,1)
+              if(fam.eq.2) ip=lgmcx(sp,j,1)
+              if(ircx.lt.1.or.ip.lt.1.or.ip.gt.nplsi) cycle
+              if(cx_map(ip).lt.0) cycle
+              kk=nreacx(ircx)
+              modc=-1
+              if(kk.ge.1.and.kk.le.size(modclf))
+     &          modc=eirene_idez(modclf(kk),3,5)
+              model2=(modcol(3,2,ircx).eq.2.and.kk.ge.1)
+              if(.not.model2.and.(modcol(3,2,ircx).ne.1.or.
+     &           (modc.ne.1.and.modc.ne.3))) then
+                nunsup=nunsup+1
+                cycle
+              endif
+              ipls=ip
+              if(.not.fresh) then
+                ne_s=dein(ic)
+                nel_s=deinl(ic)
+                di_s=diin(ip,ic)
+                di_ls=diinl(ip,ic)
+                ti_s=tiinl(mplsti(ip),ic)
+                ne_l=1.0e-6_R8*ne(hx,hy)
+                di_l=1.0e-6_R8*na(hx,hy,cx_map(ip))
+                ti_l=ti(hx,hy)/ev
+                dein(ic)=ne_l
+                deinl(ic)=log(max(1.0_R8,min(ne_l,1.0e20_R8)))
+                diin(ip,ic)=di_l
+                diinl(ip,ic)=log(max(1.0_R8,di_l))
+                tiinl(mplsti(ip),ic)=log(max(1.0e-3_R8,ti_l))
+              endif
+              if(model2) then
+c               Eirene's on-the-fly energy-dependent rate (fpath.f,
+c               MODCOL(3,2)=2), neutral energy fixed at 3 eV
+                tii=tiinl(mplsti(ip),ic)+addcx(ircx,ip)
+                expo=eirene_rate_coeff(kk,ic,tii,elb0,.false.,0)+
+     &            diinl(ip,ic)+facrcx(ircx,2)
+                k=exp(min(expo,700.0_R8))
+              else
+                k=eirene_ftabcx3(ircx,ic)
+              endif
+              if(.not.fresh) then
+                dein(ic)=ne_s
+                deinl(ic)=nel_s
+                diin(ip,ic)=di_s
+                diinl(ip,ic)=di_ls
+                tiinl(mplsti(ip),ic)=ti_s
+              endif
+              evt=vol(ic)*den*k
+              acc(hx,hy,cx_map(ip))=acc(hx,hy,cx_map(ip))+evt
+            enddo
+          enddo
+        enddo
+      enddo
+      ipls=ipold
+      if(fresh) then
+        cx_uc=ua(-1:nx,-1:ny,0:ns-1)
+        cx_tc=ti(-1:nx,-1:ny)
+        cx_k=0.0_R8
+        cx_ev=0.0_R8
+        write(*,'(a,1p,24e10.3)') 'STEP_CX events/s at call, per '//
+     &    'species:',(sum(acc(:,:,is)),is=0,ns-1)
+        write(*,*) 'STEP_CX unsupported reaction evaluations',nunsup
+      else
+        cx_ev=0.0_R8
+        do is=0,ns-1
+          if(is_neutral(is)) then
+            cx_k(:,:,is)=0.0_R8
+          else
+            cx_k(:,:,is)=am(is)*mp*acc(:,:,is)
+          endif
+          cx_ev=cx_ev+acc(:,:,is)
+        enddo
+        write(*,'(a,1p,24e10.3)') 'STEP_CX events/s now, per '//
+     &    'species:',(sum(acc(:,:,is)),is=0,ns-1)
+        write(*,'(a,1p,24e10.3)') 'STEP_CX sum K*u_call [N] per '//
+     &    'species:',(sum(cx_k(:,:,is)*cx_uc(:,:,is)),is=0,ns-1)
+      endif
+      deallocate(acc)
+      end subroutine eirene_cx_state
+
+      subroutine eirene_cx_apply(nx,ny,ns,smo,shi)
+c     Adds the charge-exchange response to the linearised sources of a
+c     skipped step so that their value at the state of the last Eirene
+c     call is unchanged:  smo += -K*(ua-ua_call),
+c     shi += -(3/2)*events*(Ti-Ti_call).
+      implicit none
+      integer, intent(in) :: nx,ny,ns
+      real(R8), intent(inout) :: smo(-1:nx,-1:ny,0:3,0:ns-1),
+     & shi(-1:nx,-1:ny,0:3)
+      integer :: ix,iy,is
+      if(iand(rr_key,16).eq.0) return
+      if(.not.allocated(cx_k).or..not.cx_ok) return
+      do is=0,ns-1
+        if(is_neutral(is)) cycle
+        do iy=-1,ny
+          do ix=-1,nx
+            if(cx_k(ix,iy,is).le.0.0_R8) cycle
+            smo(ix,iy,1,is)=smo(ix,iy,1,is)-cx_k(ix,iy,is)
+            smo(ix,iy,0,is)=smo(ix,iy,0,is)+cx_k(ix,iy,is)*
+     &        cx_uc(ix,iy,is)
+          enddo
+        enddo
+      enddo
+      do iy=-1,ny
+        do ix=-1,nx
+          if(cx_ev(ix,iy).le.0.0_R8) cycle
+          shi(ix,iy,1)=shi(ix,iy,1)-1.5_R8*cx_ev(ix,iy)
+          shi(ix,iy,0)=shi(ix,iy,0)+1.5_R8*cx_ev(ix,iy)*cx_tc(ix,iy)
+        enddo
+      enddo
+      end subroutine eirene_cx_apply
+
+      subroutine reconstruct_eirene_rates(nx,ny,fresh)
+c     Treatment of steps without an Eirene call
+c     ('eirene_rate_reconstruct' 1 in b2mn.dat; 0 = off).  Eirene keeps
+c     its reaction data and the neutral densities between calls.  At a
+c     fresh call (fresh=.true.) this stores, per B2.5 cell, the summed
+c     event rates of Eirene's own rate functions at the state of the
+c     call: N (electron-impact events of atoms, molecules and test
+c     ions), NR (recombination) and P (electron energy loss).  On a
+c     skipped step it re-evaluates them with the stored densities at
+c     B2.5's present ne, Te and returns rr_f(1:4,ix,iy): the ratios
+c     N, NR and P (present/last call, limited to 0.25 to 4) and the
+c     local Te exponent of P (from Te and 1.1 Te), which the source
+c     assembly applies to the replayed tallies.
+      use eirmod_comusr, only: natmi,nmoli,nioni,nplsi,dein,tein,diin,
+     &  vol,deinl,teinl
+      use eirmod_comxs, only: naeii,nmeii,nieii,lgaei,lgmei,lgiei,
+     &  nprci,lgprc,nelrei,jelrei,eelei1,nreii
+      use eirmod_parmmod, only: nstordr,nrad
+      use eirmod_cgrid, only: nsbox
+      use eirmod_cpes, only: my_pe
+      use eirmod_ctrig, only: ixtri,iytri,ntrii
+      use eirmod_ccoupl, only: ncutb,ncutl,ndxa,ndya
+      use eirmod_cgeom, only: npoint
+      use eirmod_cpolyg, only: npplg
+      use eirmod_parmmod, only: ndx,ndy
+      implicit none
+      integer, intent(in) :: nx,ny
+      logical, intent(in) :: fresh
+      integer :: ix,iy,itri,icode,ic,hx,hy,nbad
+      real(R8) :: code,vn,vr,ve,vn2,vr2,ve2,ne_l,te_l,w,a0,a1,a2
+      real(R8) :: smx,smn,sml,spx,spn,sm1
+      real(R8), allocatable :: fld(:,:,:),dum(:,:),acc(:,:,:)
+      external eirene_indmap
+      real(R8) :: rmin, rmax
+      real(R8), parameter :: dln11=0.0953101798_R8
+      if(rr_key.le.0) return
+      if(my_pe.ne.0) return
+c     key bit 32: wide ratio limits (0.001 to 1000) instead of 0.25 to 4
+      rmin=0.25_R8
+      rmax=4.0_R8
+      if(iand(rr_key,32).ne.0) then
+        rmin=1.0e-3_R8
+        rmax=1.0e3_R8
+      endif
+      if(.not.allocated(rr_f)) then
+        allocate(rr_f(4,-1:nx,-1:ny),rr_a0(3,-1:nx,-1:ny))
+        rr_f(1:3,:,:)=1.0_R8
+        rr_f(4,:,:)=0.0_R8
+        rr_a0=0.0_R8
+      endif
+      if(.not.allocated(rr_hx)) then
+c       host B2.5 cell of every Eirene triangle (Eirene's own index
+c       mapping, as for TEB, DNIB ...)
+        allocate(rr_hx(nsbox),rr_hy(nsbox))
+        rr_hx=-99
+        rr_hy=-99
+        if(ncutb.ge.0) then
+          allocate(fld(0:ndx+1,0:ndy+1,1),dum(0:ndx+1,0:ndy+1))
+          fld=-1.0_R8
+          dum=0.0_R8
+          do iy=-1,ny
+            do ix=-1,nx
+              fld(ix+1,iy+1,1)=real((ix+2)*100000+(iy+2),R8)
+            enddo
+          enddo
+          call eirene_indmap(fld,dum,ndx,ndy,1,ndxa,ndya,1,ncutb,ncutl,
+     &      npoint,npplg)
+          do itri=1,min(ntrii,nsbox)
+            code=fld(ixtri(itri),iytri(itri),1)
+            if(code.gt.0.0_R8) then
+              icode=nint(code)
+              rr_hx(itri)=icode/100000-2
+              rr_hy(itri)=mod(icode,100000)-2
+            endif
+          enddo
+          deallocate(fld,dum)
+        endif
+      endif
+      allocate(acc(4,-1:nx,-1:ny))
+      acc=0.0_R8
+      if(fresh) then
+c       rates at the state of this call, summed per B2.5 cell
+        do ic=1,nsbox
+          hx=rr_hx(ic)
+          hy=rr_hy(ic)
+          if(hx.lt.-1) cycle
+          ne_l=dein(ic)
+          te_l=tein(ic)
+          if(.not.allocated(rr_ne0)) allocate(rr_ne0(nsbox))
+          rr_ne0(ic)=dein(ic)
+          call rr_eval(ic,ne_l,te_l,vn,vr,ve)
+          w=vol(ic)
+          acc(1,hx,hy)=acc(1,hx,hy)+w*vn
+          acc(2,hx,hy)=acc(2,hx,hy)+w*vr
+          acc(3,hx,hy)=acc(3,hx,hy)+w*ve
+        enddo
+        rr_a0=acc(1:3,:,:)
+        rr_f(1:3,:,:)=1.0_R8
+        rr_f(4,:,:)=0.0_R8
+        rr_have=.true.
+        deallocate(acc)
+        return
+      endif
+      if(.not.rr_have) then
+        deallocate(acc)
+        return
+      endif
+c     present state: rates at (ne,Te) and at (ne,1.1 Te)
+      do ic=1,nsbox
+        hx=rr_hx(ic)
+        hy=rr_hy(ic)
+        if(hx.lt.-1) cycle
+        ne_l=1.0e-6_R8*ne(hx,hy)
+c       key bit 64: neutral shielding, keep the electron density of the
+c       last call in the rates (the neutrals do not follow a density rise)
+        if(iand(rr_key,64).ne.0.and.allocated(rr_ne0)) ne_l=rr_ne0(ic)
+        te_l=te(hx,hy)/ev
+        call rr_eval(ic,ne_l,te_l,vn,vr,ve)
+        call rr_eval(ic,ne_l,1.1_R8*te_l,vn2,vr2,ve2)
+        w=vol(ic)
+        acc(1,hx,hy)=acc(1,hx,hy)+w*vn
+        acc(2,hx,hy)=acc(2,hx,hy)+w*vr
+        acc(3,hx,hy)=acc(3,hx,hy)+w*ve
+        acc(4,hx,hy)=acc(4,hx,hy)+w*ve2
+      enddo
+      smx=0.0_R8
+      smn=1.0e30_R8
+      spx=0.0_R8
+      spn=1.0e30_R8
+      sml=0.0_R8
+      sm1=0.0_R8
+      nbad=0
+      do iy=-1,ny
+        do ix=-1,nx
+          a0=rr_a0(1,ix,iy)
+          if(a0.gt.0.0_R8.and.acc(1,ix,iy).gt.0.0_R8) then
+            rr_f(1,ix,iy)=max(rmin,min(rmax,acc(1,ix,iy)/a0))
+          else
+            rr_f(1,ix,iy)=1.0_R8
+          endif
+          a0=rr_a0(2,ix,iy)
+          if(a0.gt.0.0_R8.and.acc(2,ix,iy).gt.0.0_R8) then
+            rr_f(2,ix,iy)=max(rmin,min(rmax,acc(2,ix,iy)/a0))
+          else
+            rr_f(2,ix,iy)=1.0_R8
+          endif
+          a0=rr_a0(3,ix,iy)
+          a1=acc(3,ix,iy)
+          a2=acc(4,ix,iy)
+          if(a0.lt.0.0_R8.and.a1.lt.0.0_R8) then
+            rr_f(3,ix,iy)=max(rmin,min(rmax,a1/a0))
+            if(a2.lt.0.0_R8) then
+              rr_f(4,ix,iy)=max(0.0_R8,min(10.0_R8,
+     &          log(a2/a1)/dln11))
+            else
+              rr_f(4,ix,iy)=0.0_R8
+            endif
+          else
+            rr_f(3,ix,iy)=1.0_R8
+            rr_f(4,ix,iy)=0.0_R8
+            nbad=nbad+1
+          endif
+          smx=max(smx,rr_f(1,ix,iy))
+          smn=min(smn,rr_f(1,ix,iy))
+          spx=max(spx,rr_f(3,ix,iy))
+          spn=min(spn,rr_f(3,ix,iy))
+          sml=sml+rr_f(4,ix,iy)
+          sm1=sm1+1.0_R8
+        enddo
+      enddo
+      write(*,'(a,1p,5e11.3,i7)') 'EIRENE_RATE_RECONSTRUCT Nmin,Nmax,'//
+     &  'Pmin,Pmax,mean p,nbad:',smn,smx,spn,spx,
+     &  sml/max(sm1,1.0_R8),nbad
+      deallocate(acc)
+
+      contains
+
+      subroutine rr_eval(jc,ne_in,te_in,sn,sr,se)
+c     sums over species and reactions of one Eirene triangle at the
+c     given plasma state (cm^-3, eV): sn events of electron impact,
+c     sr recombination, se electron energy loss [1/cm3/s, eV/cm3/s]
+      integer, intent(in) :: jc
+      real(R8), intent(in) :: ne_in,te_in
+      real(R8), intent(out) :: sn,sr,se
+      integer :: fam,nsp,nr,sp,j,ir,kk_el
+      logical :: eps_ok
+      real(R8) :: den,k,eps,ne_s,nel_s,tel_s
+      real(R8) :: eirene_ftabei1,eirene_ftabrc1,eirene_feelei1
+      external eirene_ftabei1,eirene_ftabrc1,eirene_feelei1
+      sn=0.0_R8
+      sr=0.0_R8
+      se=0.0_R8
+      ne_s=dein(jc)
+      nel_s=deinl(jc)
+      tel_s=teinl(jc)
+      dein(jc)=ne_in
+      deinl(jc)=log(max(1.0_R8,min(ne_in,1.0e20_R8)))
+      teinl(jc)=log(max(1.0e-3_R8,min(te_in,1.0e10_R8)))
+      do fam=1,4
+        if(fam.eq.1) nsp=natmi
+        if(fam.eq.2) nsp=nmoli
+        if(fam.eq.3) nsp=nioni
+        if(fam.eq.4) nsp=nplsi
+        do sp=1,nsp
+          if(fam.eq.1) nr=naeii(sp)
+          if(fam.eq.2) nr=nmeii(sp)
+          if(fam.eq.3) nr=nieii(sp)
+          if(fam.eq.4) nr=nprci(sp)
+          if(fam.eq.1) den=pdena(sp,jc)
+          if(fam.eq.2) den=pdenm(sp,jc)
+          if(fam.eq.3) den=pdeni(sp,jc)
+          if(fam.eq.4) den=diin(sp,jc)
+          if(den.le.0.0_R8) cycle
+          do j=1,nr
+            if(fam.eq.1) ir=lgaei(sp,j)
+            if(fam.eq.2) ir=lgmei(sp,j)
+            if(fam.eq.3) ir=lgiei(sp,j)
+            if(fam.eq.4) ir=lgprc(sp,j)
+            if(fam.le.3) then
+              k=eirene_ftabei1(ir,jc)
+              kk_el=nelrei(ir)
+              eps_ok=(kk_el.le.-4).or.
+     &          (kk_el.gt.0.and.(jelrei(ir).eq.1.or.
+     &           jelrei(ir).eq.9)).or.
+     &          (kk_el.eq.0.and.(jelrei(ir).eq.-1.or.
+     &           jelrei(ir).eq.-2))
+              if(eps_ok) then
+                eps=eirene_feelei1(ir,jc)
+              elseif(nstordr.ge.nrad) then
+                eps=eelei1(ir,jc)
+              else
+                eps=0.0_R8
+              endif
+              sn=sn+den*k
+              se=se+den*k*eps
+            else
+              k=eirene_ftabrc1(ir,jc)
+              sr=sr+den*k
+            endif
+          enddo
+        enddo
+      enddo
+      dein(jc)=ne_s
+      deinl(jc)=nel_s
+      teinl(jc)=tel_s
+      end subroutine rr_eval
+
+      end subroutine reconstruct_eirene_rates
+#endif
+
+      subroutine eirene_ramp_load(nx,ny,ns)
+c     Restart: read the source applied on the last step of the parent
+c     run from the file named by 'eirene_ramp_state_file' (written by
+c     eirene_ramp_save at the parent's checkpoint or at its end), so
+c     that the first fresh call is blended from it.
+      use b2mod_ipmain, only : ipgetc
+      implicit none
+      integer, intent(in) :: nx,ny,ns
+      character*512 rfname
+      integer :: rios,ru,rnx,rny,rns
+      logical :: rex
+      external xertst
+      rfname=' '
+      call ipgetc('eirene_ramp_state_file',rfname)
+      if(len_trim(rfname).eq.0) return
+      inquire(file=trim(rfname),exist=rex)
+      if(.not.rex) then
+        write(*,*) 'EIRENE_RAMP_STATE file not found: ',trim(rfname)
+        return
+      endif
+      open(newunit=ru,file=trim(rfname),form='unformatted',
+     &  status='old',iostat=rios)
+      call xertst(rios.eq.0,'EIRENE_RAMP_STATE cannot open file')
+      read(ru,iostat=rios) rnx,rny,rns
+      call xertst(rios.eq.0.and.rnx.eq.nx.and.rny.eq.ny.and.rns.eq.ns,
+     &  'EIRENE_RAMP_STATE dimensions differ')
+      read(ru,iostat=rios) ramp_pna,ramp_pmo,ramp_phe,ramp_phi
+      call xertst(rios.eq.0,'EIRENE_RAMP_STATE cannot read arrays')
+      close(ru)
+      ramp_have=.true.
+      write(*,*) 'EIRENE_RAMP_STATE loaded ',trim(rfname)
+      end subroutine eirene_ramp_load
+
+      subroutine eirene_ramp_save(tag)
+c     Write the last applied source (the state ramp_eirene_sources keeps
+c     for the next call) to eirene_ramp_state.<tag> in the working
+c     directory.
+      implicit none
+      character(len=*), intent(in) :: tag
+      integer :: ru,rios
+      if(ramp_n.le.0.or..not.ramp_have) return
+      if(.not.allocated(ramp_pna)) return
+      open(newunit=ru,file='eirene_ramp_state.'//trim(tag),
+     &  form='unformatted',status='replace',iostat=rios)
+      if(rios.ne.0) return
+      write(ru) ubound(ramp_pna,1),ubound(ramp_pna,2),
+     &  ubound(ramp_pna,4)+1
+      write(ru) ramp_pna,ramp_pmo,ramp_phe,ramp_phi
+      close(ru)
+      write(*,*) 'EIRENE_RAMP_STATE saved ',trim(tag)
+      end subroutine eirene_ramp_save
+
+      subroutine ramp_eirene_sources(nx,ny,ns,fresh,sna,smo,she,shi)
+c     Phase in the change of the source at a fresh Eirene call over
+c     'eirene_ramp_steps' N steps (default 0 = off).  The source of the
+c     step before the call (kept every step) is blended with the source
+c     of the fresh call: on step k after the call (k=0 at the call) the
+c     old source has the weight 1-(k+1)/N, explicit and implicit parts
+c     alike, so the new source is reached after N steps.  The first
+c     call of a run has no previous source and is not ramped.
+      implicit none
+      integer, intent(in) :: nx,ny,ns
+      logical, intent(in) :: fresh
+      real(R8), intent(inout) :: sna(-1:nx,-1:ny,0:1,0:ns-1),
+     & smo(-1:nx,-1:ny,0:3,0:ns-1),
+     & she(-1:nx,-1:ny,0:3),shi(-1:nx,-1:ny,0:3)
+      real(R8) :: w
+      if(ramp_n.le.0) return
+      if(.not.allocated(ramp_pna)) then
+        allocate(ramp_pna(-1:nx,-1:ny,0:1,0:ns-1),
+     &   ramp_pmo(-1:nx,-1:ny,0:1,0:ns-1),ramp_phe(-1:nx,-1:ny,0:1),
+     &   ramp_phi(-1:nx,-1:ny,0:1),ramp_fna(-1:nx,-1:ny,0:1,0:ns-1),
+     &   ramp_fmo(-1:nx,-1:ny,0:1,0:ns-1),ramp_fhe(-1:nx,-1:ny,0:1),
+     &   ramp_fhi(-1:nx,-1:ny,0:1))
+      endif
+      if(.not.ramp_have.and..not.ramp_tried) then
+        ramp_tried=.true.
+        call eirene_ramp_load(nx,ny,ns)
+      endif
+      if(fresh) then
+        ramp_k=0
+        ramp_on=ramp_have
+        if(ramp_have) then
+          ramp_fna=ramp_pna
+          ramp_fmo=ramp_pmo
+          ramp_fhe=ramp_phe
+          ramp_fhi=ramp_phi
+        endif
+      endif
+      if(ramp_on) then
+        w=1.0_R8-real(ramp_k+1,R8)/real(ramp_n,R8)
+        if(w.le.0.0_R8) then
+          ramp_on=.false.
+        else
+          sna(:,:,0:1,:)=(1.0_R8-w)*sna(:,:,0:1,:)+w*ramp_fna
+          smo(:,:,0:1,:)=(1.0_R8-w)*smo(:,:,0:1,:)+w*ramp_fmo
+          she(:,:,0:1)=(1.0_R8-w)*she(:,:,0:1)+w*ramp_fhe
+          shi(:,:,0:1)=(1.0_R8-w)*shi(:,:,0:1)+w*ramp_fhi
+          write(*,'(a,2i5,1p,e12.4)') 'EIRENE_RAMP k,N,weight of old',
+     &      ramp_k,ramp_n,max(w,0.0_R8)
+        endif
+      endif
+      ramp_k=ramp_k+1
+      ramp_pna=sna(:,:,0:1,:)
+      ramp_pmo=smo(:,:,0:1,:)
+      ramp_phe=she(:,:,0:1)
+      ramp_phi=shi(:,:,0:1)
+      ramp_have=.true.
+      end subroutine ramp_eirene_sources
 
       subroutine check_symmetrise_eirene_grid(nx)
 c     Stop unless the grid is a connected double null: two cuts that

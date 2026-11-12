@@ -3730,6 +3730,35 @@
 				</description>
 			</switch>
 			<switch>
+				<name>eirene_rate_reconstruct</name>
+				<default>0</default>
+				<type>integer</type>
+				<description>
+					For use with 'eirene_mod' &gt; 1 (Eirene called only every eirene_mod B2.5 steps) when Eirene is coupled in-process. Describes how the sources are made to follow the plasma on the steps without an Eirene call; 0 (default) reuses the sources of the last Eirene call unchanged. The value is a sum of bits, and bit 1 must be set to use any of them.
+					Bit 1 (value 1): at each Eirene call, store for every B2.5 cell the summed rates of Eirene's own reaction-rate functions (electron-impact events of atoms, molecules and test ions, recombination, and electron energy loss), evaluated with the plasma state of the call and Eirene's neutral densities. On the steps without an Eirene call, re-evaluate them at the present ne and Te with the stored neutral densities and multiply the ionisation, recombination and electron cooling sources (and the particle source used for the kinetic energy conversion) by the ratio present/last call, limited to the range 0.25 to 4. The cooling sink is linearised with the local Te exponent of its rate.
+					Bit 16 (value 16): charge-exchange response between calls. On the steps without an Eirene call, the charge-exchange event rate per ion species, from Eirene's own rate with the stored neutral densities at the present ion density and temperature, adds a momentum friction -K*(ua-ua_call) and an ion thermal energy relaxation -(3/2)*events*(Ti-Ti_call), so that the sources are unchanged at the state of the last call.
+					Bit 32 (value 32): widen the limits of the ratios of bit 1 to 0.001 to 1000.
+					Bit 64 (value 64): keep the electron density of the last call in the rates of bit 1, because the neutrals do not follow a rise of the electron density within a few steps.
+					Other values are not allowed. A typical value is 113 (1+16+32+64).
+				</description>
+			</switch>
+			<switch>
+				<name>eirene_ramp_steps</name>
+				<default>0</default>
+				<type>integer</type>
+				<description>
+					If N &gt; 0, the change of the sources at an Eirene call is phased in over N B2.5 steps: the source applied on the step before the call is blended with the source of the new call, the old source having the weight 1-(k+1)/N on step k after the call (k=0 at the call), for the explicit and implicit parts alike. The first call of a run has no previous source and is not ramped. Default 0: no ramp. Useful with 'eirene_mod' &gt; 1 to avoid a jump of the sources at each call. See also 'eirene_ramp_state_file'.
+				</description>
+			</switch>
+			<switch>
+				<name>eirene_ramp_state_file</name>
+				<default></default>
+				<type>string</type>
+				<description>
+					Used with 'eirene_ramp_steps' &gt; 0. Name of a file (relative to the solver working directory, so for example '../eirene_ramp_state.final') with the source applied on the last step of a previous run, so that the first Eirene call of this run is blended from it. Such a file, eirene_ramp_state.&lt;tag&gt;, is written to the working directory at every plasma checkpoint (tag = the checkpoint number) and at the end of a run (tag = final). Default: no file, the first call is not ramped.
+				</description>
+			</switch>
+			<switch>
 				<name>eirene_extrap</name>
 				<default>1</default>
 				<type>integer</type>
