@@ -4409,7 +4409,7 @@ c     .     ('Negative eirene_ionising_core must be used with BCCON=13')
         write(*,*) 'Cumulative_volume_recombination ',cum_volrec
       end if !}
 
-      if(main_call) call step_symmetrise_sources(nx,ny,ns,
+      if(main_call) call symmetrise_eirene_sources(nx,ny,ns,
      & sna0,smo0,she0,shi0)
 
       if (main_call.or.ncall.eq.0) ncall=ncall+1
@@ -4719,10 +4719,12 @@ c!###}
       return
       end subroutine neutr_scl
 
-      subroutine step_symmetrise_sources(nx,ny,ns,sna,smo,she,shi)
+      subroutine symmetrise_eirene_sources(nx,ny,ns,sna,smo,she,shi)
 c     Up-down mirror average of the Eirene sources handed to B2.
 c     Switched on by 'eirene_symmetrise_sources' 1 in b2mn.dat
-c     (default 0 = off).
+c     (default 0 = off).  Only meaningful for a connected double
+c     null grid that is itself up-down symmetric; the topology is
+c     checked when the key is read, the symmetry of the grid is not.
 c     Mirror: ix -> lo+hi-ix inside each block, blocks start at the
 c     columns with leftix(ix,0)=-2.  Particle, energy and all
 c     linearisation coefficients are even; the constant part of the
@@ -4740,6 +4742,15 @@ c     Slots 2 and 3 are not used by eirene_mc and must be zero.
       if(sym_key.lt.0) then
         sym_key=0
         call ipgeti('eirene_symmetrise_sources',sym_key)
+        if(sym_key.ne.0) then
+c         A connected double null has two cuts reaching the same
+c         radial rows (both X-points on the same flux surface).
+          call xertst(nncut.eq.2,
+     &     'eirene_symmetrise_sources needs a connected double null')
+          call xertst(topcut(1).eq.topcut(2).and.
+     &     bottomcut(1).eq.bottomcut(2),
+     &     'eirene_symmetrise_sources: double null not connected')
+        endif
       endif
       key=sym_key
       if(key.eq.0) return
@@ -4787,8 +4798,8 @@ c     Slots 2 and 3 are not used by eirene_mc and must be zero.
           enddo
         enddo
       enddo
-      write(*,*) 'STEP_SRC_SYMMETRISED'
-      end subroutine step_symmetrise_sources
+      write(*,*) 'EIRENE_SOURCES_SYMMETRISED'
+      end subroutine symmetrise_eirene_sources
 
       subroutine alloc_hist_arrays(nhistd,write_eirene_sources)      !IYS 28.03.12 {
 #ifdef B25_EIRENE

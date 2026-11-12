@@ -3711,6 +3711,15 @@
 				</description>
 			</switch>
 			<switch>
+				<name>eirene_symmetrise_sources</name>
+				<default>0</default>
+				<type>integer</type>
+				<description>
+					If &lt;&gt; 0, averages the sources that Eirene hands to B2.5 with their up-down mirror image: for each cell, the average of its sources and those of the cell mirrored about the midplane (ix -&gt; lo+hi-ix within each of the two poloidal blocks). The particle and energy sources and the linearisation coefficients are even under the reflection, the constant part of the parallel momentum source is odd.
+					Only meaningful for a connected double null simulation (two X-points on the same flux surface) on a grid that is itself up-down symmetric, with an up-down symmetric Eirene mesh and input. When the switch is read, the run stops if the grid is not a connected double null (two cuts, with the same topcut and bottomcut). The symmetry of the grid itself is not checked. Default 0: no symmetrisation.
+				</description>
+			</switch>
+			<switch>
 				<name>eirene_extrap</name>
 				<default>1</default>
 				<type>integer</type>
