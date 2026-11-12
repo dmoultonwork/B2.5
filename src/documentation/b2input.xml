@@ -326,6 +326,16 @@
 				</description>
 			</switch>
 			<switch>
+				<name>b2agbs_average_flux</name>
+				<default>0</default>
+				<type>integer</type>
+				<description>
+					Only active if b2agdr_redef_gmtry.ne.0 (the default), when the geometrical quantities pbsx, hx and hy are corrected in b2agbs. The correction keeps the poloidal flux of each flux tube constant along the tube, and by default takes as its reference the flux through the western face of one chosen cell of each flux-tube segment.
+					When b2agbs_average_flux.ne.0, the reference is instead the average over all valid western faces of the segment (including the right target face, excluding the non-existent face of a left guard cell). This makes the corrected metrics independent of which face is chosen, and so invariant under an up-down reflection of a symmetric grid: with the default, the reference of two mirror-image segments can be taken at different physical locations.
+					Intended for connected double null grids that are made up-down symmetric, to give a b2fgmtry that is exactly symmetric. Default 0 leaves the geometry unchanged. To be used in b2ag.dat.
+				</description>
+			</switch>
+			<switch>
 				<name>b2agdr_redef_gmtry</name>
 				<default>1</default>
 				<type>integer</type>
