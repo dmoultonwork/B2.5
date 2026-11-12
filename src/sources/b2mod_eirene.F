@@ -170,6 +170,7 @@
       logical main_call                                           !dpc
 csw 19oct2012, added save attribute!!!
       logical, save :: my_ltime
+      integer, save :: symmetrise_sources=0
 
       integer ix,iy,is,ib,ih,it,ifl,istrai,ncall,iatm,imol,iion
       integer pfrregno1, pfrregno2, solregno, isfeedback, ncallfeedback,
@@ -469,6 +470,10 @@ c not sure this is the right place
         call ipgeti ('eirene_savef30', save_f30)
         call ipgeti ('eirene_savef31', save_f31)
         call ipgeti ('eirene_use_recyceir', use_recyceir)
+        symmetrise_sources=0
+        call ipgeti ('eirene_symmetrise_sources', symmetrise_sources)
+        if(symmetrise_sources.ne.0)
+     &   call check_symmetrise_eirene_grid(nx)
 csw 28jan2011, call to eirene_mc_init not used anymore, use new modules
 c        call eirene_mc_init(nx,ny)
         call eirene_extrab25_alloc_mods
@@ -4409,8 +4414,8 @@ c     .     ('Negative eirene_ionising_core must be used with BCCON=13')
         write(*,*) 'Cumulative_volume_recombination ',cum_volrec
       end if !}
 
-      if(main_call) call symmetrise_eirene_sources(nx,ny,ns,
-     & sna0,smo0,she0,shi0)
+      if(main_call.and.symmetrise_sources.ne.0)
+     & call symmetrise_eirene_sources(nx,ny,ns,sna0,smo0,she0,shi0)
 
       if (main_call.or.ncall.eq.0) ncall=ncall+1
 
@@ -4719,12 +4724,35 @@ c!###}
       return
       end subroutine neutr_scl
 
+      subroutine check_symmetrise_eirene_grid(nx)
+c     Stop unless the grid is a connected double null: two cuts that
+c     reach the same radial rows (both X-points on the same flux
+c     surface) and two poloidal blocks.
+      implicit none
+      integer, intent(in) :: nx
+      integer :: ix,nblock
+      external xertst
+      call xertst(nncut.eq.2,
+     & 'eirene_symmetrise_sources needs a connected double null')
+      call xertst(topcut(1).eq.topcut(2).and.
+     & bottomcut(1).eq.bottomcut(2),
+     & 'eirene_symmetrise_sources: double null not connected')
+      nblock=0
+      do ix=-1,nx
+        if(leftix(ix,0).eq.-2) nblock=nblock+1
+      enddo
+      call xertst(nblock.eq.2,
+     & 'eirene_symmetrise_sources needs exactly two blocks')
+      end subroutine check_symmetrise_eirene_grid
+
       subroutine symmetrise_eirene_sources(nx,ny,ns,sna,smo,she,shi)
 c     Up-down mirror average of the Eirene sources handed to B2.
-c     Switched on by 'eirene_symmetrise_sources' 1 in b2mn.dat
-c     (default 0 = off).  Only meaningful for a connected double
-c     null grid that is itself up-down symmetric; the topology is
-c     checked when the key is read, the symmetry of the grid is not.
+c     Called only when 'eirene_symmetrise_sources' is not 0 in
+c     b2mn.dat (default 0 = off); the key is read, and the grid
+c     checked by check_symmetrise_eirene_grid, at the first call of
+c     eirene_mc, before any Eirene run.  Only meaningful for a
+c     connected double null grid that is itself up-down symmetric;
+c     the topology is checked, the symmetry of the grid is not.
 c     Mirror: ix -> lo+hi-ix inside each block, blocks start at the
 c     columns with leftix(ix,0)=-2.  Particle, energy and all
 c     linearisation coefficients are even; the constant part of the
@@ -4735,25 +4763,9 @@ c     Slots 2 and 3 are not used by eirene_mc and must be zero.
       real(R8), intent(inout) :: sna(-1:nx,-1:ny,0:1,0:ns-1),
      & smo(-1:nx,-1:ny,0:3,0:ns-1),
      & she(-1:nx,-1:ny,0:3),shi(-1:nx,-1:ny,0:3)
-      integer :: ix,iy,is,k,ncut,cut2,mx,key
-      integer, save :: sym_key=-1
+      integer :: ix,iy,is,k,ncut,cut2,mx
       real(R8) :: a
-      external ipgeti, xertst
-      if(sym_key.lt.0) then
-        sym_key=0
-        call ipgeti('eirene_symmetrise_sources',sym_key)
-        if(sym_key.ne.0) then
-c         A connected double null has two cuts reaching the same
-c         radial rows (both X-points on the same flux surface).
-          call xertst(nncut.eq.2,
-     &     'eirene_symmetrise_sources needs a connected double null')
-          call xertst(topcut(1).eq.topcut(2).and.
-     &     bottomcut(1).eq.bottomcut(2),
-     &     'eirene_symmetrise_sources: double null not connected')
-        endif
-      endif
-      key=sym_key
-      if(key.eq.0) return
+      external xertst
       ncut=0
       cut2=0
       do ix=-1,nx
