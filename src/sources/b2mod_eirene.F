@@ -4409,6 +4409,9 @@ c     .     ('Negative eirene_ionising_core must be used with BCCON=13')
         write(*,*) 'Cumulative_volume_recombination ',cum_volrec
       end if !}
 
+      if(main_call) call step_symmetrise_sources(nx,ny,ns,
+     & sna0,smo0,she0,shi0)
+
       if (main_call.or.ncall.eq.0) ncall=ncall+1
 
 * ..return
@@ -4715,6 +4718,77 @@ c!###}
       endif ! ank_mods
       return
       end subroutine neutr_scl
+
+      subroutine step_symmetrise_sources(nx,ny,ns,sna,smo,she,shi)
+c     Up-down mirror average of the Eirene sources handed to B2.
+c     Switched on by 'eirene_symmetrise_sources' 1 in b2mn.dat
+c     (default 0 = off).
+c     Mirror: ix -> lo+hi-ix inside each block, blocks start at the
+c     columns with leftix(ix,0)=-2.  Particle, energy and all
+c     linearisation coefficients are even; the constant part of the
+c     parallel momentum source is odd (its ua coefficient is even).
+c     Slots 2 and 3 are not used by eirene_mc and must be zero.
+      implicit none
+      integer, intent(in) :: nx,ny,ns
+      real(R8), intent(inout) :: sna(-1:nx,-1:ny,0:1,0:ns-1),
+     & smo(-1:nx,-1:ny,0:3,0:ns-1),
+     & she(-1:nx,-1:ny,0:3),shi(-1:nx,-1:ny,0:3)
+      integer :: ix,iy,is,k,ncut,cut2,mx,key
+      integer, save :: sym_key=-1
+      real(R8) :: a
+      external ipgeti, xertst
+      if(sym_key.lt.0) then
+        sym_key=0
+        call ipgeti('eirene_symmetrise_sources',sym_key)
+      endif
+      key=sym_key
+      if(key.eq.0) return
+      ncut=0
+      cut2=0
+      do ix=-1,nx
+        if(leftix(ix,0).eq.-2) then
+          ncut=ncut+1
+          if(ncut.eq.2) cut2=ix
+        endif
+      enddo
+      call xertst(ncut.eq.2,
+     & 'eirene_symmetrise_sources needs exactly two blocks')
+      call xertst(all(smo(:,:,2:3,:).eq.0.0_R8).and.
+     & all(she(:,:,2:3).eq.0.0_R8).and.all(shi(:,:,2:3).eq.0.0_R8),
+     & 'eirene_symmetrise_sources: unexpected source slots 2:3')
+      do ix=-1,nx
+        if(ix.lt.cut2) then
+          mx=cut2-2-ix
+        else
+          mx=cut2+nx-ix
+        endif
+        if(mx.lt.ix) cycle
+        do iy=-1,ny
+          do k=0,1
+            do is=0,ns-1
+              a=0.5_R8*(sna(ix,iy,k,is)+sna(mx,iy,k,is))
+              sna(ix,iy,k,is)=a
+              sna(mx,iy,k,is)=a
+            enddo
+            a=0.5_R8*(she(ix,iy,k)+she(mx,iy,k))
+            she(ix,iy,k)=a
+            she(mx,iy,k)=a
+            a=0.5_R8*(shi(ix,iy,k)+shi(mx,iy,k))
+            shi(ix,iy,k)=a
+            shi(mx,iy,k)=a
+          enddo
+          do is=0,ns-1
+            a=0.5_R8*(smo(ix,iy,0,is)-smo(mx,iy,0,is))
+            smo(ix,iy,0,is)=a
+            smo(mx,iy,0,is)=-a
+            a=0.5_R8*(smo(ix,iy,1,is)+smo(mx,iy,1,is))
+            smo(ix,iy,1,is)=a
+            smo(mx,iy,1,is)=a
+          enddo
+        enddo
+      enddo
+      write(*,*) 'STEP_SRC_SYMMETRISED'
+      end subroutine step_symmetrise_sources
 
       subroutine alloc_hist_arrays(nhistd,write_eirene_sources)      !IYS 28.03.12 {
 #ifdef B25_EIRENE
