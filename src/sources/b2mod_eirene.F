@@ -91,7 +91,8 @@ c     (eirene_ramp_steps)
       integer, allocatable, save :: cx_map(:)
       logical, save :: cx_init=.false., cx_ok=.false.
       logical, save :: cx_listed=.false.
-      integer, save :: rr_key=-1
+      integer, save :: rr_key=-1, rr_fixne=0
+      real (kind=R8), save :: rr_rmin=1.0e-3_R8, rr_rmax=1.0e3_R8
       logical, save :: fresh_call=.true.
       integer, save :: ramp_n=-1, ramp_k=0
       logical, save :: ramp_have=.false., ramp_on=.false.
@@ -499,9 +500,18 @@ c not sure this is the right place
      &   call check_symmetrise_eirene_grid(nx)
         rr_key=0
         call ipgeti ('eirene_rate_reconstruct', rr_key)
-        call xertst(iand(rr_key,not(113)).eq.0.and.
-     &   (rr_key.eq.0.or.iand(rr_key,1).ne.0),
-     &   'eirene_rate_reconstruct: use 0 or 1 plus 16, 32, 64')
+        call xertst(rr_key.eq.0.or.rr_key.eq.1,
+     &   'eirene_rate_reconstruct must be 0 or 1')
+        rr_rmin=1.0e-3_R8
+        rr_rmax=1.0e3_R8
+        rr_fixne=0
+        call ipgetr ('eirene_rate_ratio_min', rr_rmin)
+        call ipgetr ('eirene_rate_ratio_max', rr_rmax)
+        call ipgeti ('eirene_rate_fixed_ne', rr_fixne)
+        call xertst(rr_rmin.gt.0.0_R8.and.rr_rmax.ge.rr_rmin,
+     &   'eirene_rate_ratio_min/max: need 0 < min <= max')
+        call xertst(rr_fixne.eq.0.or.rr_fixne.eq.1,
+     &   'eirene_rate_fixed_ne must be 0 or 1')
         ramp_n=0
         call ipgeti ('eirene_ramp_steps', ramp_n)
         call xertst(ramp_n.ge.0,'eirene_ramp_steps must be >= 0')
@@ -4826,9 +4836,9 @@ c!###}
 
 #ifdef B25_EIRENE
       subroutine eirene_cx_state(nx,ny,ns,fresh)
-c     Charge-exchange response between Eirene calls (bit 16 of
+c     Charge-exchange response between Eirene calls (part of
 c     'eirene_rate_reconstruct').  At a fresh call: map Eirene's bulk
-c     ion species to B2.5 species (by density), store the ion flow
+c     ion species to B2.5 species (in order, checked by density), store the ion flow
 c     velocity and ion temperature of the call and print the charge-
 c     exchange event rates.  On a skipped step: re-evaluate Eirene's own
 c     charge-exchange rate (eirene_ftabcx3) per triangle with the stored
@@ -4856,7 +4866,7 @@ c     total (cx_ev, for the ion thermal-energy relaxation).
       real(R8), parameter :: elb0=1.0986122887_R8
       external eirene_ftabcx3,eirene_rate_coeff
       logical :: model2
-      if(iand(rr_key,16).eq.0) return
+      if(rr_key.le.0) return
       if(my_pe.ne.0) return
       if(.not.allocated(rr_hx)) return
       if(.not.allocated(cx_k)) then
@@ -4872,31 +4882,40 @@ c     total (cx_ev, for the ion thermal-energy relaxation).
         cx_ok=.true.
         allocate(cx_map(max(1,nplsi)))
         cx_map=-1
+c       Eirene bulk ion ip is the ip-th non-neutral B2.5 species
+c       (copy_background fills dnib in that order).  Check this against
+c       the densities Eirene holds and stop if it does not hold.
         do ip=1,nplsi
           best=-1
-          bestf=0.0_R8
+          nmatch=0
           do is=0,ns-1
             if(is_neutral(is)) cycle
-            nmatch=0
-            ntot=0
-            do ic=1,nsbox
-              hx=rr_hx(ic)
-              hy=rr_hy(ic)
-              if(hx.lt.-1) cycle
-              if(diin(ip,ic).le.1.0e8_R8) cycle
-              ntot=ntot+1
-              if(abs(diin(ip,ic)-1.0e-6_R8*na(hx,hy,is)).le.
-     &           1.0e-6_R8*diin(ip,ic)) nmatch=nmatch+1
-            enddo
-            frac=real(nmatch,R8)/max(1,ntot)
-            if(frac.gt.bestf) then
-              bestf=frac
-              best=is
-            endif
+            nmatch=nmatch+1
+            if(nmatch.eq.ip) best=is
           enddo
-          if(bestf.gt.0.99_R8) cx_map(ip)=best
+          if(best.lt.0) then
+            write(*,'(a,i3,a)') 'EIRENE_CX bulk ion',ip,
+     &        ' has no B2.5 species: no charge-exchange response for it'
+            cycle
+          endif
+          nmatch=0
+          ntot=0
+          do ic=1,nsbox
+            hx=rr_hx(ic)
+            hy=rr_hy(ic)
+            if(hx.lt.-1) cycle
+            if(diin(ip,ic).le.1.0e8_R8) cycle
+            ntot=ntot+1
+            if(abs(diin(ip,ic)-1.0e-6_R8*na(hx,hy,best)).le.
+     &         1.0e-6_R8*diin(ip,ic)) nmatch=nmatch+1
+          enddo
+          bestf=real(nmatch,R8)/max(1,ntot)
           write(*,'(a,i3,a,i3,a,f8.4)') 'EIRENE_CX map bulk ion',ip,
      &      ' -> B2.5 species',best,' matching fraction',bestf
+          call xertst(ntot.eq.0.or.bestf.gt.0.99_R8,
+     &     'eirene_cx_state: bulk ion density differs from the B2.5 '//
+     &     'species it should map to (eirene_rate_reconstruct)')
+          cx_map(ip)=best
         enddo
       endif
       if(.not.cx_ok) return
@@ -5036,7 +5055,7 @@ c     shi += -(3/2)*events*(Ti-Ti_call).
       real(R8), intent(inout) :: smo(-1:nx,-1:ny,0:3,0:ns-1),
      & shi(-1:nx,-1:ny,0:3)
       integer :: ix,iy,is
-      if(iand(rr_key,16).eq.0) return
+      if(rr_key.le.0) return
       if(.not.allocated(cx_k).or..not.cx_ok) return
       do is=0,ns-1
         if(is_neutral(is)) cycle
@@ -5095,13 +5114,9 @@ c     assembly applies to the replayed tallies.
       real(R8), parameter :: dln11=0.0953101798_R8
       if(rr_key.le.0) return
       if(my_pe.ne.0) return
-c     key bit 32: wide ratio limits (0.001 to 1000) instead of 0.25 to 4
-      rmin=0.25_R8
-      rmax=4.0_R8
-      if(iand(rr_key,32).ne.0) then
-        rmin=1.0e-3_R8
-        rmax=1.0e3_R8
-      endif
+c     ratio limits: eirene_rate_ratio_min and eirene_rate_ratio_max
+      rmin=rr_rmin
+      rmax=rr_rmax
       if(.not.allocated(rr_f)) then
         allocate(rr_f(4,-1:nx,-1:ny),rr_a0(3,-1:nx,-1:ny))
         rr_f(1:3,:,:)=1.0_R8
@@ -5171,9 +5186,9 @@ c     present state: rates at (ne,Te) and at (ne,1.1 Te)
         hy=rr_hy(ic)
         if(hx.lt.-1) cycle
         ne_l=1.0e-6_R8*ne(hx,hy)
-c       key bit 64: neutral shielding, keep the electron density of the
+c       eirene_rate_fixed_ne: neutral shielding, keep the electron density of the
 c       last call in the rates (the neutrals do not follow a density rise)
-        if(iand(rr_key,64).ne.0.and.allocated(rr_ne0)) ne_l=rr_ne0(ic)
+        if(rr_fixne.ne.0.and.allocated(rr_ne0)) ne_l=rr_ne0(ic)
         te_l=te(hx,hy)/ev
         call rr_eval(ic,ne_l,te_l,vn,vr,ve)
         call rr_eval(ic,ne_l,1.1_R8*te_l,vn2,vr2,ve2)

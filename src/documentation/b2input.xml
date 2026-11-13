@@ -3734,12 +3734,34 @@
 				<default>0</default>
 				<type>integer</type>
 				<description>
-					For use with 'eirene_mod' &gt; 1 (Eirene called only every eirene_mod B2.5 steps) when Eirene is coupled in-process. Describes how the sources are made to follow the plasma on the steps without an Eirene call; 0 (default) reuses the sources of the last Eirene call unchanged. The value is a sum of bits, and bit 1 must be set to use any of them.
-					Bit 1 (value 1): at each Eirene call, store for every B2.5 cell the summed rates of Eirene's own reaction-rate functions (electron-impact events of atoms, molecules and test ions, recombination, and electron energy loss), evaluated with the plasma state of the call and Eirene's neutral densities. On the steps without an Eirene call, re-evaluate them at the present ne and Te with the stored neutral densities and multiply the ionisation, recombination and electron cooling sources (and the particle source used for the kinetic energy conversion) by the ratio present/last call, limited to the range 0.25 to 4. The cooling sink is linearised with the local Te exponent of its rate.
-					Bit 16 (value 16): charge-exchange response between calls. On the steps without an Eirene call, the charge-exchange event rate per ion species, from Eirene's own rate with the stored neutral densities at the present ion density and temperature, adds a momentum friction -K*(ua-ua_call) and an ion thermal energy relaxation -(3/2)*events*(Ti-Ti_call), so that the sources are unchanged at the state of the last call.
-					Bit 32 (value 32): widen the limits of the ratios of bit 1 to 0.001 to 1000.
-					Bit 64 (value 64): keep the electron density of the last call in the rates of bit 1, because the neutrals do not follow a rise of the electron density within a few steps.
-					Other values are not allowed. A typical value is 113 (1+16+32+64).
+					For use with 'eirene_mod' &gt; 1 (Eirene called only every eirene_mod B2.5 steps) when Eirene is coupled in-process. If 1, the sources follow the plasma on the steps without an Eirene call; 0 (default) reuses the sources of the last Eirene call unchanged.
+					At each Eirene call, the summed rates of Eirene's own reaction-rate functions (electron-impact events of atoms, molecules and test ions, recombination, and electron energy loss) are stored for every B2.5 cell, evaluated with the plasma state of the call and Eirene's neutral densities. On the steps without an Eirene call they are re-evaluated at the present ne and Te with the stored neutral densities, and the ionisation, recombination and electron cooling sources (and the particle source used for the kinetic energy conversion) are multiplied by the ratio present/last call, limited by 'eirene_rate_ratio_min' and 'eirene_rate_ratio_max'. The cooling sink is linearised with the local Te exponent of its rate.
+					The same switch adds a charge-exchange response: from Eirene's own charge-exchange rate with the stored neutral densities at the present ion density and temperature, a momentum friction -K*(ua-ua_call) and an ion thermal energy relaxation -(3/2)*events*(Ti-Ti_call) per ion species, so that the sources are unchanged at the state of the last call. The Eirene bulk ions are taken to be the non-neutral B2.5 species in order; the run stops if the densities do not agree.
+					The neutral densities are those of the last call and are not updated between calls, so the method assumes that they change slowly over 'eirene_mod' steps.
+				</description>
+			</switch>
+			<switch>
+				<name>eirene_rate_ratio_min</name>
+				<default>1.0e-3</default>
+				<type>real</type>
+				<description>
+					Used with 'eirene_rate_reconstruct' 1. Lower limit of the ratios present/last call by which the ionisation, recombination and electron cooling sources are scaled. Must be greater than 0. A ratio of exactly 0 would remove a source, and in cells where the stored rate is very small or the rate fits are extrapolated the ratios are not meaningful, so the range is not left unbounded.
+				</description>
+			</switch>
+			<switch>
+				<name>eirene_rate_ratio_max</name>
+				<default>1.0e3</default>
+				<type>real</type>
+				<description>
+					Used with 'eirene_rate_reconstruct' 1. Upper limit of the ratios present/last call (see 'eirene_rate_ratio_min'). Must not be less than 'eirene_rate_ratio_min'.
+				</description>
+			</switch>
+			<switch>
+				<name>eirene_rate_fixed_ne</name>
+				<default>0</default>
+				<type>integer</type>
+				<description>
+					Used with 'eirene_rate_reconstruct' 1. If 1, the electron density of the last Eirene call is kept in the rates, so the scaling follows Te only and not the present ne (a model of neutral shielding: the neutrals do not follow a rise of the electron density within a few steps). Default 0: the scaling follows both ne and Te. Not tested separately from the other settings of the scheme.
 				</description>
 			</switch>
 			<switch>
