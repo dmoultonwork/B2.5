@@ -3777,7 +3777,7 @@
 				<default></default>
 				<type>string</type>
 				<description>
-					Used with 'eirene_ramp_steps' &gt; 0. Name of a file (relative to the solver working directory, so for example '../eirene_ramp_state.final') with the source applied on the last step of a previous run, so that the first Eirene call of this run is blended from it. Such a file, eirene_ramp_state.&lt;tag&gt;, is written to the working directory at every plasma checkpoint (tag = the checkpoint number) and at the end of a run (tag = final). Default: no file, the first call is not ramped.
+					Used with 'eirene_ramp_steps' &gt; 0. When a run is restarted, the first Eirene call is blended from the source applied on the last step of the previous run, which is read automatically from the file ../eirene_ramp_state (relative to the solver working directory, so in the run directory). That file is written at every plasma checkpoint and at the end of every run, together with eirene_ramp_state.&lt;tag&gt; (tag = the checkpoint number, or final) in the working directory. The file holds the simulation time of the state it was written with. The default file is used only if that time agrees with the state being restarted (within 1.5 time steps); otherwise a warning is printed and the first call is not ramped. The same warning is printed if there is no file, which is right for a fresh start but loses the blend on a restart. Set this key only to use a different file, for example '../eirene_ramp_state.0007' to restart from checkpoint 7; a file named here must exist and match the restart state, or the run stops.
 				</description>
 			</switch>
 			<switch>

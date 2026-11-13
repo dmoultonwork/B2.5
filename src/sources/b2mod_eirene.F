@@ -4523,7 +4523,7 @@ c     .     ('Negative eirene_ionising_core must be used with BCCON=13')
 #endif
       if(main_call.and.symmetrise_sources.ne.0)
      & call symmetrise_eirene_sources(nx,ny,ns,sna0,smo0,she0,shi0)
-      if(main_call) call ramp_eirene_sources(nx,ny,ns,fresh_call,
+      if(main_call) call ramp_eirene_sources(nx,ny,ns,fresh_call,dtim,
      & sna0,smo0,she0,shi0)
 
       if (main_call.or.ncall.eq.0) ncall=ncall+1
@@ -5323,59 +5323,96 @@ c     sr recombination, se electron energy loss [1/cm3/s, eV/cm3/s]
       end subroutine reconstruct_eirene_rates
 #endif
 
-      subroutine eirene_ramp_load(nx,ny,ns)
-c     Restart: read the source applied on the last step of the parent
-c     run from the file named by 'eirene_ramp_state_file' (written by
-c     eirene_ramp_save at the parent's checkpoint or at its end), so
-c     that the first fresh call is blended from it.
+      subroutine eirene_ramp_load(nx,ny,ns,dtim)
+c     Restart: read the source applied on the last step of the previous
+c     run, so that the first fresh call is blended from it.  The file
+c     is '../eirene_ramp_state' (written at every checkpoint and at
+c     the end of a run, see eirene_ramp_save) unless
+c     'eirene_ramp_state_file' names another one.  The file carries
+c     the simulation time of the state it was written with.  The
+c     default file is used only if its time matches the state being
+c     restarted (within 1.5 steps), else a warning is printed and the
+c     first call is not ramped; a file named in the key must match or
+c     the run stops.  No default file: a fresh start, or a restart
+c     without one (warning).
       use b2mod_ipmain, only : ipgetc
       implicit none
       integer, intent(in) :: nx,ny,ns
+      real(R8), intent(in) :: dtim
       character*512 rfname
       integer :: rios,ru,rnx,rny,rns
-      logical :: rex
+      real(R8) :: rtim
+      logical :: rex,named,tmatch
       external xertst
       rfname=' '
       call ipgetc('eirene_ramp_state_file',rfname)
-      if(len_trim(rfname).eq.0) return
+      named=len_trim(rfname).gt.0
+      if(.not.named) rfname='../eirene_ramp_state'
       inquire(file=trim(rfname),exist=rex)
       if(.not.rex) then
-        write(*,*) 'EIRENE_RAMP_STATE file not found: ',trim(rfname)
+        call xertst(.not.named,
+     &   'EIRENE_RAMP_STATE: the file named in eirene_ramp_state_file'
+     &   //' does not exist')
+        write(*,*) 'EIRENE_RAMP_STATE WARNING no file ',trim(rfname),
+     &   ': first call not ramped (right for a fresh start; on a ',
+     &   'restart this loses the blend)'
         return
       endif
       open(newunit=ru,file=trim(rfname),form='unformatted',
      &  status='old',iostat=rios)
       call xertst(rios.eq.0,'EIRENE_RAMP_STATE cannot open file')
-      read(ru,iostat=rios) rnx,rny,rns
-      call xertst(rios.eq.0.and.rnx.eq.nx.and.rny.eq.ny.and.rns.eq.ns,
-     &  'EIRENE_RAMP_STATE dimensions differ')
+      read(ru,iostat=rios) rnx,rny,rns,rtim
+      call xertst(rios.eq.0,'EIRENE_RAMP_STATE cannot read header')
+      tmatch=rnx.eq.nx.and.rny.eq.ny.and.rns.eq.ns.and.
+     &  abs(tim-rtim).le.1.5_R8*dtim
+      if(.not.tmatch) then
+        call xertst(.not.named,
+     &   'EIRENE_RAMP_STATE: file does not match the restart state '//
+     &   '(grid or simulation time)')
+        write(*,*) 'EIRENE_RAMP_STATE WARNING ',trim(rfname),
+     &   ' does not match the restart state (file time ',rtim,
+     &   ', state time ',tim,'): first call not ramped'
+        close(ru)
+        return
+      endif
       read(ru,iostat=rios) ramp_pna,ramp_pmo,ramp_phe,ramp_phi
       call xertst(rios.eq.0,'EIRENE_RAMP_STATE cannot read arrays')
       close(ru)
       ramp_have=.true.
-      write(*,*) 'EIRENE_RAMP_STATE loaded ',trim(rfname)
+      write(*,*) 'EIRENE_RAMP_STATE loaded ',trim(rfname),
+     & ' (simulation time ',rtim,')'
       end subroutine eirene_ramp_load
 
       subroutine eirene_ramp_save(tag)
 c     Write the last applied source (the state ramp_eirene_sources keeps
-c     for the next call) to eirene_ramp_state.<tag> in the working
-c     directory.
+c     for the next call) with the simulation time to
+c     eirene_ramp_state.<tag> in the working directory and to
+c     ../eirene_ramp_state (the file the next run loads by default).
       implicit none
       character(len=*), intent(in) :: tag
-      integer :: ru,rios
+      integer :: ru,rios,k
+      character*64 fn
       if(ramp_n.le.0.or..not.ramp_have) return
       if(.not.allocated(ramp_pna)) return
-      open(newunit=ru,file='eirene_ramp_state.'//trim(tag),
-     &  form='unformatted',status='replace',iostat=rios)
-      if(rios.ne.0) return
-      write(ru) ubound(ramp_pna,1),ubound(ramp_pna,2),
-     &  ubound(ramp_pna,4)+1
-      write(ru) ramp_pna,ramp_pmo,ramp_phe,ramp_phi
-      close(ru)
+      do k=1,2
+        if(k.eq.1) fn='eirene_ramp_state.'//trim(tag)
+        if(k.eq.2) fn='../eirene_ramp_state'
+        open(newunit=ru,file=trim(fn),
+     &    form='unformatted',status='replace',iostat=rios)
+        if(rios.ne.0) then
+          write(*,*) 'EIRENE_RAMP_STATE WARNING cannot write ',trim(fn)
+          cycle
+        endif
+        write(ru) ubound(ramp_pna,1),ubound(ramp_pna,2),
+     &    ubound(ramp_pna,4)+1,tim
+        write(ru) ramp_pna,ramp_pmo,ramp_phe,ramp_phi
+        close(ru)
+      enddo
       write(*,*) 'EIRENE_RAMP_STATE saved ',trim(tag)
       end subroutine eirene_ramp_save
 
-      subroutine ramp_eirene_sources(nx,ny,ns,fresh,sna,smo,she,shi)
+      subroutine ramp_eirene_sources(nx,ny,ns,fresh,dtim,sna,smo,she,
+     & shi)
 c     Phase in the change of the source at a fresh Eirene call over
 c     'eirene_ramp_steps' N steps (default 0 = off).  The source of the
 c     step before the call (kept every step) is blended with the source
@@ -5386,6 +5423,7 @@ c     call of a run has no previous source and is not ramped.
       implicit none
       integer, intent(in) :: nx,ny,ns
       logical, intent(in) :: fresh
+      real(R8), intent(in) :: dtim
       real(R8), intent(inout) :: sna(-1:nx,-1:ny,0:1,0:ns-1),
      & smo(-1:nx,-1:ny,0:3,0:ns-1),
      & she(-1:nx,-1:ny,0:3),shi(-1:nx,-1:ny,0:3)
@@ -5400,7 +5438,7 @@ c     call of a run has no previous source and is not ramped.
       endif
       if(.not.ramp_have.and..not.ramp_tried) then
         ramp_tried=.true.
-        call eirene_ramp_load(nx,ny,ns)
+        call eirene_ramp_load(nx,ny,ns,dtim)
       endif
       if(fresh) then
         ramp_k=0
