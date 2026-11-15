@@ -3354,6 +3354,14 @@
 					<type>integer</type>
 				</switch>
 				<switch>
+					<name>balance_last_step</name>
+					<default>0</default>
+					<type>integer</type>
+					<description>
+						If &lt;&gt; 0 together with 'balance_netcdf' &lt;&gt; 0 (and 'balance_average' = 0), the balance arrays are updated and the balance NetCDF file is written only for the last step of a run, and for the first step at which the remaining 'b2mndr_cpu' or 'b2mndr_elapsed' time is less than twice the longest step so far (so that a run stopped by a time limit still writes it). The balance arrays are expensive to update on every step. The balance terms that come from Eirene are still gathered at every Eirene call. Default 0: as before.
+					</description>
+				</switch>
+				<switch>
 				  <name>b2mndr_cdf_default</name>
 				  <default>0</default>
 				  <type>integer</type>
@@ -3815,6 +3823,14 @@
 				Multiplier to the neutral source differential between puffing and pumping strata for code speed-up.
 				See E. Kaveeva et al., Nucl. Fusion 58 (2018) 126018 for details.
 			  </description>
+			</switch>
+			<switch>
+				<name>b2stbr_sna_history_file</name>
+				<default></default>
+				<type>string</type>
+				<description>
+					Used with the SNA_CORR source scaling (sum of sna_corr &gt; 0). Name of a text file (relative to the solver working directory) with the controller memory t1 of each species for a restart: the first line is the number of species, the second the values of t1 (as printed in the log of the previous run). Default: no file, t1 starts from zero.
+				</description>
 			</switch>
 			<switch>
 				<name>b2stbr_eir_src_nhist</name>
