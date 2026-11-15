@@ -8,6 +8,7 @@
      &  fna, fna_mdf, fhe, fhi, fht, fch, fne, fni, rsa,
      &  bb, sna0, smo0, she0, shi0, sch0, sne0, main_call)
       use b2mod_types
+      use b2mod_ipmain, only : ipgetc
       use b2mod_wall
       use b2mod_diag
       use b2mod_time
