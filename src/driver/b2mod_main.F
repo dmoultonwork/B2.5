@@ -152,6 +152,7 @@
 #ifdef B25_EIRENE
       real (kind=R8) :: dumarr(100)
       logical ltrigger
+      integer req_trig
 #endif
 #elif defined(USE_IMPGYRO)
       integer rank_mpi,size_mpi,ierr_mpi
@@ -173,8 +174,19 @@
       contains
 
       subroutine b2mn_init ()
+      use iso_c_binding, only: c_int
       implicit none
       integer idum(0:9)
+#if defined(USE_MPI) && defined(B25_EIRENE)
+      integer req_mpi
+      logical flag_mpi
+      interface
+        subroutine c_usleep(us) bind(C,name='usleep')
+          import :: c_int
+          integer(c_int), value :: us
+        end subroutine c_usleep
+      end interface
+#endif
 
 *   ..program start-up calls
 #ifdef USE_MPI
@@ -188,8 +200,17 @@ csw 28feb2011 mpi
         iunout=7+ifoff
         call eirene_find_param(0)
         do
-          call mpi_bcast(ltrigger,1,MPI_LOGICAL,0,
-     .                   MPI_COMM_WORLD,ierr_mpi)
+c         Wait for the next Eirene call without spinning: poll a
+c         non-blocking broadcast and sleep 1 ms between polls, so the
+c         idle ranks leave their cores to rank 0's OpenMP threads.
+          call mpi_ibcast(ltrigger,1,MPI_LOGICAL,0,
+     .                   MPI_COMM_WORLD,req_mpi,ierr_mpi)
+          do
+            call mpi_test(req_mpi,flag_mpi,MPI_STATUS_IGNORE,
+     .                    ierr_mpi)
+            if(flag_mpi) exit
+            call c_usleep(1000_c_int)
+          enddo
           if(ltrigger) then
             call eirene_eirsrt(.false.,.false.,
      .       0.0_R8,dumarr,0.0_R8,0.0_R8,0.0_R8,0.0_R8,0.0_R8)
@@ -354,8 +375,10 @@ csw
 #ifdef USE_MPI
 #ifdef B25_EIRENE
       ltrigger=.false.
-      call mpi_bcast(ltrigger,1,MPI_LOGICAL,0,
-     .                   MPI_COMM_WORLD,ierr_mpi)
+c     non-blocking, to match the sleeping wait of the child ranks
+      call mpi_ibcast(ltrigger,1,MPI_LOGICAL,0,
+     .                   MPI_COMM_WORLD,req_trig,ierr_mpi)
+      call mpi_wait(req_trig,MPI_STATUS_IGNORE,ierr_mpi)
 #endif
       call mpi_barrier(MPI_COMM_WORLD,ierr_mpi)
       call mpi_finalize(ierr_mpi)
