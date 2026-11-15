@@ -174,7 +174,6 @@
       contains
 
       subroutine b2mn_init ()
-      use iso_c_binding, only: c_int
       implicit none
       integer idum(0:9)
 #if defined(USE_MPI) && defined(B25_EIRENE)
@@ -182,8 +181,8 @@
       logical flag_mpi
       interface
         subroutine c_usleep(us) bind(C,name='usleep')
-          import :: c_int
-          integer(c_int), value :: us
+c         int of the C library (default integer kind 4)
+          integer(kind=4), value :: us
         end subroutine c_usleep
       end interface
 #endif
@@ -209,7 +208,7 @@ c         idle ranks leave their cores to rank 0's OpenMP threads.
             call mpi_test(req_mpi,flag_mpi,MPI_STATUS_IGNORE,
      .                    ierr_mpi)
             if(flag_mpi) exit
-            call c_usleep(1000_c_int)
+            call c_usleep(1000_4)
           enddo
           if(ltrigger) then
             call eirene_eirsrt(.false.,.false.,
