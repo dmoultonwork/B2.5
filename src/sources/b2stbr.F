@@ -135,6 +135,8 @@
      &  smr0_eir(-1:nx,-1:ny,0:3,0:ns-1),
      &  smd0_eir(-1:nx,-1:ny,0:3,0:ns-1),
      &  she0_eir(-1:nx,-1:ny,0:3), shi0_eir(-1:nx,-1:ny,0:3)
+      character(512) sna_hist_file
+      integer sna_hist_ios,sna_hist_unit,sna_hist_count
       real (kind=R8), allocatable, save :: t1(:)                        !iyv 07.03.18 }
       real (kind=R8), save :: recycled_neutrals_contr = 1.0_R8
       character chns*3, chk*1                                           !srv 11.09.09 } 23.03.12
@@ -252,6 +254,24 @@
         if( sum(sna_corr) .gt. 0.0_R8 ) then
            allocate(t1(1:nspecies))
            t1=0.0_R8
+c Restart: take the controller memory t1 from a file, the first line
+c holding the number of species and the second the t1 values (written
+c from the log of the previous run).  Default: start from zero.
+           sna_hist_file=' '
+           sna_hist_ios=0
+           call ipgetc('b2stbr_sna_history_file',sna_hist_file)
+           if(len_trim(sna_hist_file).gt.0) then
+             open(newunit=sna_hist_unit,file=trim(sna_hist_file),
+     &         status='old',action='read',iostat=sna_hist_ios)
+             call xertst(sna_hist_ios.eq.0,'Cannot open SNA history')
+             read(sna_hist_unit,*,iostat=sna_hist_ios) sna_hist_count
+             call xertst(sna_hist_ios.eq.0.and.
+     &         sna_hist_count.eq.nspecies,'Wrong SNA history size')
+             read(sna_hist_unit,*,iostat=sna_hist_ios) t1
+             close(sna_hist_unit)
+             call xertst(sna_hist_ios.eq.0,'Cannot read SNA history')
+             write(*,*) 'SNA_HISTORY initial t1 ',nspecies,t1
+           endif
         endif                                                        !iyv 07.03.18 }
         call ipgetr ('b2stbr_recycled_neutrals_contr',               !srv 12.04.08
      &                       recycled_neutrals_contr)
