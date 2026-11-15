@@ -51,7 +51,62 @@
 !$OMP THREADPRIVATE(lfirst_ilu7)
 #endif
 
+c     Per-species pivot state of the 7-diagonal solver. The thread
+c     private state is overwritten by COPYIN at every parallel region
+c     and lost at its end, and the master's state belongs to some other
+c     species, so a threaded solve started from a poor factorisation
+c     and fell back to a full analysis. Each species keeps the state
+c     of its own previous solve here (pivot order and index arrays only;
+c     the matrix values, work arrays and saved copies are rebuilt on
+c     every call). The serial code reaches the same effect by solving
+c     similar species one after the other.
+      type ma28_7_species_state
+        logical :: valid = .false.
+        integer, allocatable :: ikeep(:,:)
+        integer, allocatable :: icnhkeep(:), icnh(:), irnh(:)
+      end type ma28_7_species_state
+      integer, parameter :: ma28_7_nstate = 128
+      type(ma28_7_species_state), save ::
+     1 ma28_7_state(0:ma28_7_nstate-1)
+
       contains
+
+      subroutine save_ma28_7_state(is)
+c     Called by the thread that has just solved species is.
+      implicit none
+      integer, intent(in) :: is
+      if (is.lt.0 .or. is.ge.ma28_7_nstate) return
+      if (lfirst_ilu7 .or. .not.allocated(ikeep_7p)) return
+      if (.not.allocated(ma28_7_state(is)%ikeep)) then
+        allocate(ma28_7_state(is)%ikeep(size(ikeep_7p,1),
+     1   size(ikeep_7p,2)))
+        allocate(ma28_7_state(is)%icnhkeep(size(icnhkeep_7p)))
+        allocate(ma28_7_state(is)%icnh(size(icnh_7p)))
+        allocate(ma28_7_state(is)%irnh(size(irnh_7p)))
+      end if
+      ma28_7_state(is)%ikeep = ikeep_7p
+      ma28_7_state(is)%icnhkeep = icnhkeep_7p
+      ma28_7_state(is)%icnh = icnh_7p
+      ma28_7_state(is)%irnh = irnh_7p
+      ma28_7_state(is)%valid = .true.
+      return
+      end subroutine save_ma28_7_state
+
+      subroutine load_ma28_7_state(is)
+c     Called before the solve of species is. With no saved state the
+c     thread keeps whatever state it has.
+      implicit none
+      integer, intent(in) :: is
+      if (is.lt.0 .or. is.ge.ma28_7_nstate) return
+      if (.not.ma28_7_state(is)%valid .or. .not.allocated(ikeep_7p))
+     1 return
+      ikeep_7p = ma28_7_state(is)%ikeep
+      icnhkeep_7p = ma28_7_state(is)%icnhkeep
+      icnh_7p = ma28_7_state(is)%icnh
+      irnh_7p = ma28_7_state(is)%irnh
+      lfirst_ilu7 = .false.
+      return
+      end subroutine load_ma28_7_state
 
       subroutine alloc_b2mod_ma28_for_7diag                           !sv 11.01.00
       implicit none

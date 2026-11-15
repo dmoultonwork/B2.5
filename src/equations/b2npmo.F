@@ -858,7 +858,8 @@ cdjm Mar2019 output the total momentum flux and source for balance
          solvedum(0:nnreg(0))=solvemo(is,0:nnreg(0))
 c    ..compare 5-pt stencil matrices
 #if ( defined(_OPENMP) && !defined(NO_OPENMP_B2NPMO) )
-         call restart_ma28
+c    ..threads start from the master's pivot state (COPYIN), as the
+c    ..serial run reuses one state for all species: no restart here
 #else
          new_matrix = .false.
          do ireg = 0, nnreg(0)
@@ -923,7 +924,7 @@ csw 21feb2014, execute simultaneous corrections always
 *   ..compute simultaneous correction
          call sfill (n2, 0.0_R8, wrk0, 1)
 #if ( defined(_OPENMP) && !defined(NO_OPENMP_B2NPMO) )
-         call restart_ma28
+c    ..serial region: keep the master pivot state, as the serial code
 #else
          new_matrix = .false.
          do ireg = 0, nnreg(0)

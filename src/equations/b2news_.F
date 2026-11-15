@@ -732,7 +732,8 @@ csw 16oct2012 init ier0
             if((visper_all_ions.ne.0 .and. .not.is_neutral(is)) .or.
      &         (visper_all_ions.eq.0 .and. is.eq.ismain)) then
 #if ( defined(_OPENMP) && !defined(NO_OPENMP_B2NEWS_UNDERSCORE_LOOP2) )
-              call restart_ma28_for_7
+c    ..start from this species' own previous factorisation
+              call load_ma28_7_state(is)
 #else
               new_matrix = first_pass_7
               do ireg = 0, nnreg(0)
@@ -748,11 +749,14 @@ csw 16oct2012 init ier0
      &         ti, pb, na(-1,-1,is), ua(-1,-1,is), fna(-1,-1,0,is),
      &         resco(-1,-1,is), corpa(-1,-1,is), ier0)
               call xertst (ier0.eq.0, 'error return from b2npc7')
+#if ( defined(_OPENMP) && !defined(NO_OPENMP_B2NEWS_UNDERSCORE_LOOP2) )
+              call save_ma28_7_state(is)
+#endif
               last_solve_7(is,0:nnreg(0))=solveco(is,0:nnreg(0))
               first_pass_7 = .false.
             else                                                         !srv 02.04.18
 #if ( defined(_OPENMP) && !defined(NO_OPENMP_B2NEWS_UNDERSCORE_LOOP2) )
-              call restart_ma28
+c    ..threads start from the master pivot state (COPYIN); no restart
 #else
               new_matrix = first_pass_5
               do ireg = 0, nnreg(0)
@@ -775,7 +779,7 @@ csw 16oct2012 init ier0
             if(.not.is_neutral(is)) then
               if(visper_all_ions.ne.0 .or. is.eq.ismain) then
 #if ( defined(_OPENMP) && !defined(NO_OPENMP_B2NEWS_UNDERSCORE_LOOP2) )
-                call restart_ma28_for_11
+c    ..threads start from the master pivot state (COPYIN); no restart
 #else
                 new_matrix = first_pass_11
                 do ireg = 0, nnreg(0)
@@ -796,7 +800,7 @@ csw 16oct2012 init ier0
                 first_pass_11 = .false.
               else                                                       !srv 02.04.18
 #if ( defined(_OPENMP) && !defined(NO_OPENMP_B2NEWS_UNDERSCORE_LOOP2) )
-                call restart_ma28_for_9
+c    ..threads start from the master pivot state (COPYIN); no restart
 #else
                 new_matrix = first_pass_9
                 do ireg = 0, nnreg(0)
@@ -817,7 +821,7 @@ csw 16oct2012 init ier0
               endif
             else
 #if ( defined(_OPENMP) && !defined(NO_OPENMP_B2NEWS_UNDERSCORE_LOOP2) )
-              call restart_ma28
+c    ..threads start from the master pivot state (COPYIN); no restart
 #else
               new_matrix = first_pass_5
               do ireg = 0, nnreg(0)
