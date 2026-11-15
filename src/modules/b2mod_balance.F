@@ -452,6 +452,10 @@
 *   ..balance_netcdf decides whether to initialise, track, and write balance arrays.
 *     Default: do not create balance arrays (balance_netcdf.eq.0)
       integer, save :: balance_netcdf
+*     bal_eir: copy of balance_netcdf used by the Eirene interface
+*     (b2mod_eirene), which keeps its balance bookkeeping on every step
+*     also when 'balance_last_step' switches balance_netcdf off
+      integer, save :: bal_eir = 0
 
 *   ..balance_average decides whether to average balance arrays over time.
 *     Default: do not average (balance_average.eq.0)

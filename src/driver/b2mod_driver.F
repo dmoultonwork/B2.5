@@ -60,6 +60,7 @@
       use b2mod_running_average
       use b2mod_balance !djm Jan2017
      & , only : write_balance, balance_netcdf, alloc_b2mod_balance,
+     &          bal_eir,
      &          dealloc_b2mod_balance, dealloc_b2mod_eirene_sources,
      &          balance_average, update_average_balance
       use b2mod_b2plot
@@ -179,6 +180,11 @@
       integer, save :: b2sigp_style = 2
       integer, save :: b2mndt_style = 1
       integer, save :: ird_aver = 0
+      integer, save :: bal_last = 0, bal_user = 0
+      integer, save :: bal_lastact = -1
+      real (kind=R8), save :: bal_tmax = 0.0_R8,
+     &  bal_tprev = 0.0_R8, bal_tnow = 0.0_R8,
+     &  bal_rem = 0.0_R8
       integer, save :: zn_rescale = 0
       integer, save :: Zhdanov_closure = 0
       integer, save :: shot = 0, run = 0, ids_save = 0, ids_av = 0
@@ -1051,6 +1057,10 @@
        call ipgeti ('balance_netcdf', balance_netcdf)                   !djm Jan2017
        call ipgeti ('balance_average', balance_average)
        if (balance_netcdf.ne.0) call alloc_b2mod_balance(nx,ny,ns)
+c      balance updates only at the last step of a run
+       call ipgeti ('balance_last_step', bal_last)
+       bal_user = balance_netcdf
+       bal_eir = balance_netcdf
        call ipgeti ('b2mndr_iout', iout)                                !srv 25.01.16
        call ipgeti ('b2mndr_ntim', ntim)
        call ipgetr ('b2mndr_dtim', dtim)
@@ -2519,6 +2529,29 @@ csw 09oct2012 set default potential already at this point (BCs)
           po(:,:)=3.1_R8*te(:,:)/qe
         endif
 
+*    ..balance diagnostics only on the last step of a run
+*      (unless balance_average, which averages over all steps)
+        if (bal_last.ne.0.and.bal_user.ne.0.and.
+     &      balance_average.eq.0) then
+          bal_tnow = epoch_seconds()
+          if (itim.gt.1) bal_tmax =
+     &     max(bal_tmax,bal_tnow-bal_tprev)
+          bal_tprev = bal_tnow
+          bal_rem = 1.0e30_R8
+          if (b2mndr_cpu.gt.0.0_R8) bal_rem =
+     &     min(bal_rem,b2mndr_cpu-real(cpuval-cpuinit,R8))
+          if (b2mndr_elapsed.gt.0.0_R8) bal_rem =
+     &     min(bal_rem,
+     &      b2mndr_elapsed-(bal_tnow-elapsedinit))
+          balance_netcdf = 0
+          if (itim+1.ge.ntim.or.
+     &     bal_rem.lt.2.0_R8*bal_tmax)
+     &      balance_netcdf = bal_user
+          if (balance_netcdf.ne.0) then
+            bal_lastact = itim
+            write(*,'(1x,a,i9)') 'BALANCE_LAST_STEP active itim ',itim
+          endif
+        endif
 *    ..perform one time step
         ok=.false.
         do while(.not.ok)
@@ -3674,6 +3707,12 @@ cxpb Copy the IDS to a temporary location with the new DD and then bring it back
         endif
       endif
 *   ..create NetCDF file containing everything for balance postprocessing routines !djm Jan2017
+      if (bal_last.ne.0) then
+        balance_netcdf = bal_user
+        write(*,'(1x,a,2i9)')
+     &   'BALANCE_LAST_STEP last active step, final itim ',
+     &   bal_lastact,itim
+      endif
       if(balance_netcdf.ne.0) then
 #ifndef NO_CDF
         if (balance_average .ne. 0) then
